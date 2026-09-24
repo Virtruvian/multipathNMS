@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Settings · multipathNMS{% endblock %}
+{% block content %}
+<section class="hero-row"><div><h1>Settings</h1><p>Manage monitored targets.</p></div></section>
+<section class="grid-2 settings-grid">
+  <div class="panel">
+    <div class="panel-title">Add target</div>
+    <form id="target-form" class="form-stack">
+      <label>Name<input id="target-name" required maxlength="120" placeholder="Google DNS"></label>
+      <label>Address<input id="target-address" required maxlength="255" placeholder="8.8.8.8 or host.example.org"></label>
+      <button type="submit">Add target</button>
+      <div id="form-message" class="form-message"></div>
+    </form>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Targets</div>
+    <div class="settings-targets">
+      {% for target in targets %}
+      <div class="settings-row" id="settings-target-{{ target.id }}">
+        <div><strong>{{ target.name }}</strong><small>{{ target.address }}</small></div>
+        <button class="danger delete-target" data-id="{{ target.id }}">Delete</button>
+      </div>
+      {% else %}
+      <div class="empty">No targets configured.</div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/settings.js"></script>{% endblock %}

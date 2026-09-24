@@ -1,0 +1,24 @@
+services:
+  multipathnms:
+    build: .
+    container_name: multipathnms
+    init: true
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW
+    ports:
+      - "8080:8080"
+    environment:
+      APP_DATA_DIR: /data
+      HEALTH_INTERVAL_SECONDS: 2
+      TOPOLOGY_INTERVAL_SECONDS: 60
+      TOPOLOGY_STALE_MINUTES: 15
+      VOYAGE_TIMEOUT_SECONDS: 90
+      VOYAGE_PROBING_RATE: 50
+      VOYAGE_CONFIDENCE: 99
+      SUSPECT_AFTER_FAILURES: 3
+      DOWN_AFTER_FAILURES: 5
+      DEGRADED_LOSS_PERCENT: 10
+      DEGRADED_LATENCY_MULTIPLIER: 2
+    volumes:
+      - ./data:/data
