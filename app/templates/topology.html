@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Topology · multipathNMS{% endblock %}
+{% block head %}
+<script src="https://unpkg.com/cytoscape@3.32.0/dist/cytoscape.min.js"></script>
+{% endblock %}
+{% block content %}
+<section class="hero-row">
+  <div>
+    <h1>Live Topology</h1>
+    <p>Paris-style multipath discovery with persistent route identities and history.</p>
+  </div>
+  <div class="toolbar">
+    <select id="target-select">
+      <option value="">Select target…</option>
+      {% for target in targets %}
+      <option value="{{ target.id }}">{{ target.name }} · {{ target.address }}</option>
+      {% endfor %}
+    </select>
+    <button id="discover-btn">Discover now</button>
+  </div>
+</section>
+
+<section class="summary topology-summary">
+  <div class="metric"><span>Active routes</span><strong id="topology-active">0</strong></div>
+  <div class="metric"><span>Degraded</span><strong id="topology-degraded">0</strong></div>
+  <div class="metric"><span>Missing</span><strong id="topology-missing">0</strong></div>
+  <div class="metric"><span>Probe replies</span><strong id="topology-replies">0</strong></div>
+  <div class="metric metric-wide"><span>Last scan</span><strong id="topology-last-scan">—</strong></div>
+</section>
+
+<section class="topology-layout">
+  <div class="panel topology-panel">
+    <div class="graph-legend">
+      <span><i class="legend-dot legend-active"></i>Current</span>
+      <span><i class="legend-dot legend-missing"></i>Missing/recent</span>
+      <span>Click a route, node or link for details.</span>
+    </div>
+    <div id="cy"></div>
+  </div>
+
+  <aside class="topology-sidebar">
+    <section class="panel">
+      <div class="panel-title">Routes</div>
+      <div id="route-list" class="route-list">
+        <div class="empty">Select a target.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">Details</div>
+      <div id="topology-details" class="details">
+        <p>Select a target to inspect its topology.</p>
+      </div>
+      <details>
+        <summary>Raw Voyage output (manual scan)</summary>
+        <pre id="voyage-output">—</pre>
+      </details>
+    </section>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/topology.js"></script>{% endblock %}
