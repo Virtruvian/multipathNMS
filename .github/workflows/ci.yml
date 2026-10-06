@@ -27,6 +27,8 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    env:
+      APP_DATA_DIR: ${{ runner.temp }}/multipathnms-test-data
     steps:
       - name: Checkout
         uses: actions/checkout@v4

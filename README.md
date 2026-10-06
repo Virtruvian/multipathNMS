@@ -111,7 +111,7 @@ Avoid setting topology discovery to very short intervals: MDA intentionally send
 The Voyage parser and SQLite topology persistence have deterministic fixture tests:
 
 ```bash
-python -m unittest discover -s tests -v
+APP_DATA_DIR=./test-data python -m unittest discover -s tests -v
 ```
 
 Graph preparation tests use Node.js 22 without additional npm dependencies:
