@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 import ipaddress
 from pathlib import Path
 import re
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, select
 
 from .database import SessionLocal, init_db
+from .config import settings
 from .models import Event, Target
 from .services.monitor import MonitorService, monitor
 from .services.topology import topology, topology_payload
@@ -40,6 +42,7 @@ class TargetCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     address: str = Field(min_length=1, max_length=255)
     enabled: bool = True
+    tcp_port: int = Field(default=settings.tcp_port, ge=1, le=65535)
 
     @field_validator("address")
     @classmethod
@@ -51,6 +54,7 @@ class TargetUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=255)
     enabled: bool | None = None
+    tcp_port: int = Field(default=settings.tcp_port, ge=1, le=65535)
 
     @field_validator("address")
     @classmethod
@@ -169,6 +173,7 @@ def create_target(payload: TargetCreate) -> dict:
             name=payload.name,
             address=payload.address,
             enabled=payload.enabled,
+            tcp_port=payload.tcp_port,
         )
         db.add(target)
         db.commit()
@@ -247,11 +252,14 @@ def get_topology(target_id: int) -> dict:
 
 
 @app.post("/api/topology/{target_id}/discover")
-async def discover_topology(target_id: int) -> dict:
+async def discover_topology(
+    target_id: int, protocol: Literal["all", "icmp", "tcp"] = "all",
+) -> dict:
     try:
         return await topology.discover(
             target_id,
             include_raw=True,
+            protocol=protocol,
         )
     except ValueError as exc:
         raise HTTPException(

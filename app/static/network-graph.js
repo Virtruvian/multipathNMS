@@ -2,9 +2,10 @@
   'use strict';
 
   // Display relationships between measured flows, never physical router links.
-  function build(data, {showLooseReplies = false, showHistory = true} = {}) {
+  function build(data, {showLooseReplies = false, showHistory = true, protocol = 'all'} = {}) {
     const maxTTL = Number(data.max_ttl || 32);
-    const eligible = (data.routes || []).filter(route =>
+    const scopedRoutes = (data.routes || []).filter(route => protocol === 'all' || (route.protocol || 'icmp') === protocol);
+    const eligible = scopedRoutes.filter(route =>
       (route.hops || []).every(hop => Number(hop.ttl) <= maxTTL));
     const routes = eligible.filter(route => showHistory || route.active);
     const hiddenMissingCount = eligible.filter(route => !route.active && !showHistory).length;
@@ -16,6 +17,7 @@
       || (a.hops || []).length - (b.hops || []).length)[0];
     const visibleHopIds = new Set(routes.flatMap(route => (route.hops || []).map(hop => hop.node_id)));
     const rawNodes = new Map((data.nodes || []).filter(node => Number(node.ttl) <= maxTTL
+      && (node.id === 'probe' || protocol === 'all' || (node.protocol || 'icmp') === protocol)
       && (showHistory || node.active || node.id === 'probe' || visibleHopIds.has(node.id))).map(node => [node.id, node]));
     const lastId = route => {
       const hops = route.hops || [];
@@ -45,7 +47,7 @@
         ...node, id, role: id === 'probe' ? 'source' : targetTTLs.has(id) ? 'destination' : 'router',
         ttl: targetTTLs.has(id) ? Math.max(...targetTTLs.get(id)) : node.ttl,
         observed_ttls: targetTTLs.has(id) ? Array.from(new Set(targetTTLs.get(id))) : [Number(node.ttl)],
-        active: node.active ? '1' : '0', route_ids: []
+        active: node.active ? '1' : '0', route_ids: [], methods: []
       });
     });
     const measured = new Map();
@@ -62,6 +64,8 @@
       const edgeIds = [];
       ids.forEach(id => {
         if (!nodes.get(id).route_ids.includes(route.id)) nodes.get(id).route_ids.push(route.id);
+        const method = route.protocol === 'tcp' ? 'TCP:' + route.destination_port : 'ICMP';
+        if (!nodes.get(id).methods.includes(method)) nodes.get(id).methods.push(method);
         if (route.active) nodes.get(id).active = '1';
       });
       for (let index = 1; index < originalIds.length; index++) {
@@ -79,6 +83,7 @@
           edge = {
             ...observation, id: observation ? observation.id : 'segment-' + source + '-' + target,
             source, target, kind, gap_hops: Math.max(0, gap), route_ids: [],
+            protocol: route.protocol || 'icmp',
             active: '0', samples: kind === 'gap' ? null : observation ? observation.samples : null,
             last_seen: observation ? observation.last_seen : route.last_seen
           };
@@ -135,14 +140,15 @@
 
     const elements = [];
     nodes.forEach(node => {
-      const rtt = node.rtt_ms === null || node.rtt_ms === undefined ? 'RTT —' : 'RTT ' + Number(node.rtt_ms).toFixed(1) + ' ms';
+      if (node.methods.length > 1) node.rtt_ms = node.average_rtt_ms = null;
+      const rtt = node.methods.length > 1 ? 'RTT per route' : node.rtt_ms === null || node.rtt_ms === undefined ? 'RTT —' : 'RTT ' + Number(node.rtt_ms).toFixed(1) + ' ms';
       node.label = node.role === 'source' ? 'Source\nLocal probe'
-        : (node.role === 'destination' ? 'Target' : 'Hop ' + node.ttl) + '\n' + node.address + '\n' + rtt;
+        : (node.role === 'destination' ? 'Target' : (node.methods[0] || 'ICMP') + ' · Hop ' + node.ttl) + '\n' + node.address + '\n' + rtt;
       elements.push({group: 'nodes', data: node, position: positions.get(node.id)});
     });
     edges.forEach(edge => {
       const deltaY = positions.get(edge.target).y - positions.get(edge.source).y;
-      edge.curve_distance = deltaY ? Math.sign(deltaY) * 25 : 0;
+      edge.curve_distance = deltaY ? Math.sign(deltaY) * (edge.kind === 'gap' ? -80 : 25) : 0;
       edge.label = edge.kind === 'gap' ? '* ' + edge.gap_hops + ' unobserved hop' + (edge.gap_hops === 1 ? '' : 's') : '';
       edge.status = edge.active === '0' ? 'missing'
         : edge.route_ids.length && edge.route_ids.every(id => routeById.get(id).status === 'degraded') ? 'degraded' : 'active';

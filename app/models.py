@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .config import settings
 
 
 def utcnow() -> datetime:
@@ -17,6 +18,7 @@ class Target(Base):
     name: Mapped[str] = mapped_column(String(120))
     address: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    tcp_port: Mapped[int] = mapped_column(Integer, default=lambda: settings.tcp_port)
     status: Mapped[str] = mapped_column(String(20), default="unknown")
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -38,6 +40,9 @@ class Target(Base):
         back_populates="target", cascade="all, delete-orphan"
     )
     route_paths: Mapped[list["RoutePath"]] = relationship(
+        back_populates="target", cascade="all, delete-orphan"
+    )
+    probe_states: Mapped[list["TopologyProbeState"]] = relationship(
         back_populates="target", cascade="all, delete-orphan"
     )
 
@@ -74,6 +79,8 @@ class TopologySnapshot(Base):
     target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     resolved_ip: Mapped[str] = mapped_column(String(64))
+    protocol: Mapped[str] = mapped_column(String(8), default="icmp")
+    destination_port: Mapped[int] = mapped_column(Integer, default=0)
     probe_count: Mapped[int] = mapped_column(Integer, default=0)
     node_count: Mapped[int] = mapped_column(Integer, default=0)
     edge_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -127,6 +134,9 @@ class RoutePath(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
     path_hash: Mapped[str] = mapped_column(String(40), index=True)
+    protocol: Mapped[str] = mapped_column(String(8), default="icmp")
+    destination_port: Mapped[int] = mapped_column(Integer, default=0)
+    endpoint_response: Mapped[str | None] = mapped_column(String(40), nullable=True)
     route_index: Mapped[int] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
@@ -165,3 +175,17 @@ class RouteHop(Base):
     samples: Mapped[int] = mapped_column(Integer, default=0)
 
     route_path: Mapped[RoutePath] = relationship(back_populates="hops")
+
+
+class TopologyProbeState(Base):
+    __tablename__ = "topology_probe_states"
+    __table_args__ = (UniqueConstraint("target_id", "protocol", "destination_port"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    protocol: Mapped[str] = mapped_column(String(8))
+    destination_port: Mapped[int] = mapped_column(Integer, default=0)
+    last_attempt: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target: Mapped[Target] = relationship(back_populates="probe_states")

@@ -26,6 +26,6 @@ class VoyageAdapterTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(protocol, arguments[arguments.index("--protocol") + 1])
                 self.assertEqual(0, result.return_code)
 
-    async def test_tcp_is_rejected_until_supported_by_an_engine(self) -> None:
+    async def test_voyage_rejects_tcp_which_uses_its_own_engine(self) -> None:
         with self.assertRaisesRegex(ValueError, "icmp or udp"):
             await run_voyage("8.8.8.8", protocol="tcp")

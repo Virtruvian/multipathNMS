@@ -28,7 +28,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_DATA_DIR=/data
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping libpcap0.8 ca-certificates \
+    && apt-get install -y --no-install-recommends iputils-ping traceroute libpcap0.8 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=voyage-builder /src/voyage/target/release/voyage /usr/local/bin/voyage

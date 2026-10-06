@@ -72,6 +72,24 @@ jobs:
           docker logs multipathnms-ci
           exit 1
 
+      - name: TCP engine smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          from app.services.tcp import run_tcp_trace, parse_tcp_traces
+
+          async def check():
+              for port, expected in ((8080, "syn-ack"), (8081, "reset")):
+                  result = await run_tcp_trace("127.0.0.1", port)
+                  observed = parse_tcp_traces(result)
+                  assert observed.paths and all(path.complete for path in observed.paths), result.traces
+                  assert all(path.endpoint_response == expected for path in observed.paths), result.traces
+                  assert all(path.hops[-1].address == "127.0.0.1" for path in observed.paths)
+                  print(f"TCP:{port}: {expected}, {len(result.traces)} flows parsed")
+
+          asyncio.run(check())
+          PY
+
       - name: Container logs
         if: always()
         run: docker logs multipathnms-ci || true

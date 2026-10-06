@@ -160,3 +160,59 @@ test('unprobed TTLs never appear even in the diagnostic view', () => {
   assert.equal(graph.excludedRouteCount, 1);
   assert.equal(graph.elements.some(item => item.data.id === 'bogus'), false);
 });
+
+test('comparison retains separate ICMP and TCP adjacencies and method RTTs', () => {
+  const data = {
+    target: {id: 1, address: '8.8.8.8'},
+    nodes: [
+      {id: 'probe', ttl: 0, active: true},
+      {id: 'i1', ttl: 1, address: '10.0.0.1', rtt_ms: 1, active: true, protocol: 'icmp'},
+      {id: 'it', ttl: 2, address: '8.8.8.8', rtt_ms: 2, active: true, protocol: 'icmp'},
+      {id: 't1', ttl: 1, address: '10.0.0.1', rtt_ms: 5, active: true, protocol: 'tcp'},
+      {id: 'tt', ttl: 2, address: '8.8.8.8', rtt_ms: 8, active: true, protocol: 'tcp'}
+    ],
+    edges: [
+      {id: 'icmp-link', source: 'i1', target: 'it', active: true},
+      {id: 'tcp-link', source: 't1', target: 'tt', active: true}
+    ],
+    routes: [
+      {id: 1, protocol: 'icmp', active: true, complete: true, hops: [{ttl: 1, node_id: 'i1'}, {ttl: 2, node_id: 'it'}]},
+      {id: 2, protocol: 'tcp', destination_port: 443, active: true, complete: true, hops: [{ttl: 1, node_id: 't1'}, {ttl: 2, node_id: 'tt'}]}
+    ]
+  };
+  const combined = build(data, {showHistory: false});
+  assert.equal(combined.visibleRoutes.length, 2);
+  const routerIds = combined.elements.filter(item => item.group === 'nodes' && item.data.role === 'router').map(item => item.data.id);
+  assert.deepEqual(new Set(routerIds), new Set(['i1', 't1']));
+  const endpoint = combined.elements.find(item => item.group === 'nodes' && item.data.role === 'destination');
+  assert.deepEqual(new Set(endpoint.data.methods), new Set(['ICMP', 'TCP:443']));
+  assert.equal(endpoint.data.rtt_ms, null);
+  assert.match(endpoint.data.label, /RTT per route/);
+  assert.equal(combined.elements.filter(item => item.group === 'edges' && item.data.protocol === 'tcp').length, 2);
+  for (const protocol of ['icmp', 'tcp']) {
+    const filtered = build(data, {protocol, showLooseReplies: true});
+    assert.equal(filtered.visibleRoutes.length, 1);
+    assert.ok(filtered.elements.filter(item => item.group === 'nodes' && item.data.id !== 'probe')
+      .every(item => item.data.protocol === protocol));
+    assert.ok(filtered.elements.filter(item => item.group === 'edges').every(item => item.data.protocol === protocol));
+  }
+});
+
+test('a missing TCP hop is never filled by an ICMP hop at the same TTL', () => {
+  const data = {
+    nodes: [
+      {id: 'probe', ttl: 0, active: true},
+      {id: 'icmp2', ttl: 2, address: '10.0.0.2', protocol: 'icmp', active: true},
+      {id: 'tcp1', ttl: 1, address: '10.0.0.1', protocol: 'tcp', active: true},
+      {id: 'tcp3', ttl: 3, address: '8.8.8.8', protocol: 'tcp', active: true}
+    ], edges: [],
+    routes: [{id: 3, protocol: 'tcp', destination_port: 443, active: true, complete: true,
+      hops: [{ttl: 1, node_id: 'tcp1'}, {ttl: 2, node_id: null}, {ttl: 3, node_id: 'tcp3'}]}]
+  };
+  const graph = build(data);
+  assert.equal(graph.elements.some(item => item.data.id === 'icmp2'), false);
+  const gaps = graph.elements.filter(item => item.group === 'edges' && item.data.kind === 'gap');
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].data.gap_hops, 1);
+  assert.equal(gaps[0].data.protocol, 'tcp');
+});

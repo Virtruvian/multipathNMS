@@ -101,6 +101,12 @@ Topology route status model:
 - multiple interfaces in one flow/TTL remain ambiguous; never majority-derived links
 - straight primary path, branch lanes, shared target marker and optional router icons
 - default current-path view with explicit recent-history overlay; no stored history is deleted
+- separate TCP SYN adapter with bounded fixed-port flows and per-target destination port
+- ICMP/TCP comparison with isolated method/port route IDs, RTTs, missing counts and engine errors
+- TCP graph nodes/adjacencies derive only from that scope's persisted RouteHop records
+- additive SQLite scope migration preserving all existing ICMP IDs and history
+- TCP SYN/ACK vs reset vs ICMP error distinction; target health remains ICMP-labelled
+- Docker CI executes the installed TCP engine against an open/closed loopback port
 
 ## Next implementation step
 

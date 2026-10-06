@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     voyage_probing_rate: int = 50
     voyage_confidence: float = 99.0
     voyage_max_ttl: int = Field(default=32, ge=1, le=64)
+    tcp_enabled: bool = True
+    tcp_port: int = Field(default=443, ge=1, le=65535)
+    tcp_flows: int = Field(default=3, ge=1, le=8)
+    tcp_hop_timeout_seconds: float = Field(default=1.0, ge=0.1, le=5.0)
+    tcp_sendwait_seconds: float = Field(default=0.05, ge=0.01, le=1.0)
     suspect_after_failures: int = 3
     down_after_failures: int = 5
     degraded_loss_percent: float = 10.0

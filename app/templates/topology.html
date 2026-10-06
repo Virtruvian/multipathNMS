@@ -17,6 +17,14 @@
       <option value="{{ target.id }}">{{ target.name }} · {{ target.address }}</option>
       {% endfor %}
     </select>
+    <select id="trace-method" aria-label="Measurement view">
+      <option value="all">Compare ICMP + TCP</option>
+      <option value="icmp">ICMP</option>
+      <option value="tcp">TCP</option>
+    </select>
+    <label class="tcp-port-label" for="tcp-port">TCP port
+      <input id="tcp-port" type="number" min="1" max="65535" step="1" value="443">
+    </label>
     <button id="discover-btn">Discover now</button>
   </div>
 </section>
@@ -29,10 +37,16 @@
   <div class="metric metric-wide"><span>Last scan</span><strong id="topology-last-scan">—</strong></div>
 </section>
 
+<section class="panel measurement-panel" aria-label="Measurement comparison">
+  <div id="measurement-comparison" class="measurement-comparison"></div>
+  <p class="detail-note">Each method keeps its own measured paths. TCP samples several flows; gaps stay unobserved. Target health uses ICMP ping.</p>
+</section>
+
 <section class="topology-layout">
   <div class="panel topology-panel">
     <div class="graph-legend">
-      <span><i class="legend-dot legend-active"></i>Current</span>
+      <span><i class="legend-dot legend-active"></i>ICMP current</span>
+      <span><i class="legend-dot legend-tcp"></i>TCP current</span>
       <span><i class="legend-dot legend-degraded"></i>Degraded route</span>
       <span><i class="legend-dot legend-missing"></i>Missing/recent</span>
       <span><i class="legend-gap"></i>Unobserved hops</span>
@@ -68,7 +82,7 @@
         <p>Select a target to inspect its topology.</p>
       </div>
       <details>
-        <summary>Raw Voyage output (manual scan)</summary>
+        <summary>Raw probe output (manual scan)</summary>
         <pre id="voyage-output">—</pre>
       </details>
     </section>

@@ -20,6 +20,7 @@ class PathObservation:
     flow_count: int
     complete: bool
     destination_rtt_ms: float | None
+    endpoint_response: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

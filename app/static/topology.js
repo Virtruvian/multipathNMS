@@ -3,6 +3,9 @@ const discoverButton = document.getElementById('discover-btn');
 const details = document.getElementById('topology-details');
 const routeList = document.getElementById('route-list');
 const rawOutput = document.getElementById('voyage-output');
+const methodSelect = document.getElementById('trace-method');
+const tcpPortInput = document.getElementById('tcp-port');
+let tcpPortDirty = false;
 
 let currentTopology = null;
 let selectedRouteId = null;
@@ -72,6 +75,9 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'line-style': 'dotted', 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8',
       'color': '#94a3b8'
     }},
+    {selector: 'edge[protocol = "tcp"][kind != "gap"]', style: {
+      'line-color': '#60a5fa', 'target-arrow-color': '#60a5fa'
+    }},
     {selector: 'edge[kind = "diagnostic"]', style: {
       'line-style': 'dotted', 'line-color': '#64748b', 'target-arrow-color': '#64748b'
     }},
@@ -93,7 +99,7 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
     {selector: 'node.router-node', style: {'background-image': '/static/router.svg'}},
     {selector: 'node.path-node', style: {
       'background-image': 'none', 'background-color': '#0b1621', 'background-opacity': 1,
-      'border-width': 3, 'border-color': node => node.data('active') === '0' ? '#f87171' : '#50c889',
+      'border-width': 3, 'border-color': node => node.data('active') === '0' ? '#f87171' : node.data('protocol') === 'tcp' ? '#60a5fa' : '#50c889',
       'border-style': 'solid', 'width': 30, 'height': 30, 'shape': 'ellipse',
       'text-max-width': 150, 'font-size': 13
     }},
@@ -151,6 +157,39 @@ function renderSummary(summary) {
   document.getElementById('topology-last-scan').textContent = localTime(summary.last_scan);
 }
 
+function methodName(route) {
+  return route.protocol === 'tcp' ? 'TCP:' + route.destination_port : 'ICMP';
+}
+
+function renderMeasurements(data) {
+  const panel = document.getElementById('measurement-comparison');
+  clearElement(panel);
+  (data.measurements || []).forEach(measurement => {
+    const card = document.createElement('div');
+    card.className = 'measurement-card ' + measurement.protocol;
+    const title = document.createElement('strong');
+    title.textContent = methodName(measurement);
+    const result = document.createElement('span');
+    const status = measurement.error ? 'SCAN FAILED'
+      : !measurement.last_scan ? 'NOT MEASURED'
+      : measurement.complete_routes ? 'TARGET REPLIED'
+      : measurement.active_routes ? 'PARTIAL PATH' : 'NO PATH REPLIES';
+    result.textContent = status + ' · ' + measurement.active_routes + ' current paths · '
+      + measurement.probe_replies + ' replies';
+    const timestamp = document.createElement('small');
+    timestamp.textContent = 'Last successful scan: ' + localTime(measurement.last_scan);
+    card.append(title, result, timestamp);
+    if (measurement.error) {
+      const error = document.createElement('small');
+      error.className = 'measurement-error';
+      error.textContent = 'Attempt ' + localTime(measurement.last_attempt) + ': '
+        + measurement.error + '. Previously measured paths are retained.';
+      card.appendChild(error);
+    }
+    panel.appendChild(card);
+  });
+}
+
 function highlightRoute(route) {
   selectedRouteId = route.id;
   if (!cy) return;
@@ -180,11 +219,11 @@ function showTargetDetails() {
   const data = currentTopology;
   setDetails(data.target.name, [
     ['Address', data.target.address],
-    ['Target status', String(data.target.status || 'unknown').toUpperCase()],
-    ['Target RTT', fmt(data.target.latency_ms) + ' ms'],
-    ['Target loss', fmt(data.target.loss_percent) + '%'],
-    ['Target jitter', fmt(data.target.jitter_ms) + ' ms'],
-    ['Active routes', String((data.summary || {}).active_routes || 0)]
+    ['ICMP health', String(data.target.status || 'unknown').toUpperCase()],
+    ['ICMP ping RTT', fmt(data.target.latency_ms) + ' ms'],
+    ['ICMP ping loss', fmt(data.target.loss_percent) + '%'],
+    ['ICMP ping jitter', fmt(data.target.jitter_ms) + ' ms'],
+    ['Active routes in view', String((currentGraph.visibleRoutes || []).filter(route => route.active).length)]
   ], 'Node RTT is measured from this probe, not between routers. Dotted segments show unobserved hops.');
 }
 
@@ -248,6 +287,8 @@ document.getElementById('graph-zoom-out').addEventListener('click', () => zoomGr
 function showRouteDetails(route) {
   detailSelection = {kind: 'route', id: route.id};
   setDetails(route.label, [
+    ['Method', methodName(route)],
+    ['Endpoint reply', route.endpoint_response || (route.complete ? 'ICMP reply' : 'No target reply')],
     ['Status', String(route.status || 'unknown').toUpperCase()],
     ['Current RTT', fmt(route.destination_rtt_ms) + ' ms'],
     ['Baseline', fmt(route.baseline_rtt_ms) + ' ms'],
@@ -257,7 +298,9 @@ function showRouteDetails(route) {
     ['Hops', String(route.hop_count || 0)],
     ['Flows', String(route.flow_count || 0)],
     ['Last seen', localTime(route.last_seen)]
-  ], route.complete ? 'Destination was reached on this path.' : 'Path is incomplete; one or more downstream replies are missing.');
+  ], route.complete
+    ? route.endpoint_response === 'reset' ? 'A TCP reset reached the probe. The endpoint replied; this does not establish an open service.' : 'The target replied on this measured path.'
+    : 'Path is incomplete. Silent or filtered hops do not establish a router outage.');
 
   const hopTitle = document.createElement('h4');
   hopTitle.textContent = 'Hops';
@@ -294,7 +337,7 @@ function renderRoutes(routes) {
     header.className = 'route-card-header';
 
     const name = document.createElement('strong');
-    name.textContent = route.label;
+    name.textContent = (route.protocol === 'tcp' ? '' : 'ICMP · ') + route.label;
 
     const status = document.createElement('span');
     status.className = 'route-state';
@@ -336,9 +379,21 @@ function renderRoutes(routes) {
 
 function renderTopology(data) {
   currentTopology = data;
-  renderSummary(data.summary || {});
+  if (!tcpPortDirty) tcpPortInput.value = data.target.tcp_port || 443;
+  renderMeasurements(data);
+  const visibleRoutes = (data.routes || []).filter(route => methodSelect.value === 'all' || (route.protocol || 'icmp') === methodSelect.value);
+  const measurements = (data.measurements || []).filter(item => methodSelect.value === 'all' || item.protocol === methodSelect.value);
+  renderSummary({...data.summary,
+    active_routes: visibleRoutes.filter(route => route.active).length,
+    degraded_routes: visibleRoutes.filter(route => route.status === 'degraded').length,
+    missing_routes: visibleRoutes.filter(route => route.status === 'missing').length,
+    ...(data.measurements ? {
+      probe_replies: measurements.reduce((total, item) => total + item.probe_replies, 0),
+      last_scan: measurements.map(item => item.last_scan).filter(Boolean).sort().at(-1)
+    } : {})
+  });
   const hadHops = cy && cy.nodes().length > 1;
-  currentGraph = MultipathGraph.build(data, {showLooseReplies, showHistory});
+  currentGraph = MultipathGraph.build(data, {showLooseReplies, showHistory, protocol: methodSelect.value});
   const looseButton = document.getElementById('graph-loose');
   looseButton.textContent = showLooseReplies ? 'Hide loose replies' : 'Show loose replies';
   looseButton.setAttribute('aria-pressed', String(showLooseReplies));
@@ -346,8 +401,9 @@ function renderTopology(data) {
   historyButton.textContent = showHistory ? 'Hide recent history' : 'Show recent history';
   historyButton.setAttribute('aria-pressed', String(showHistory));
   document.getElementById('graph-filter-info').textContent =
-    (showHistory ? 'Current + recent paths' : 'Current paths')
-    + ' · ' + (showHistory ? (data.summary || {}).missing_routes || 0 : currentGraph.hiddenMissingCount)
+    (methodSelect.value === 'all' ? 'ICMP + TCP' : methodSelect.value.toUpperCase())
+    + ' · ' + (showHistory ? 'Current + recent paths' : 'Latest measured paths')
+    + ' · ' + (showHistory ? visibleRoutes.filter(route => !route.active).length : currentGraph.hiddenMissingCount)
     + (showHistory ? ' recent missing paths shown' : ' recent missing paths retained in history')
     + ' · ' + currentGraph.looseReplyCount + (showLooseReplies ? ' replies outside visible paths' : ' loose replies hidden')
     + (currentGraph.excludedRouteCount ? ' · ' + currentGraph.excludedRouteCount + ' paths outside probe range excluded' : '');
@@ -388,6 +444,7 @@ select.addEventListener('change', async () => {
   selectedRouteId = null;
   detailSelection = {kind: 'target', id: null};
   rawOutput.textContent = '—';
+  tcpPortDirty = false;
   if (!select.value) return;
   try {
     await loadTopology(select.value);
@@ -396,16 +453,35 @@ select.addEventListener('change', async () => {
   }
 });
 
+tcpPortInput.addEventListener('input', () => { tcpPortDirty = true; });
+methodSelect.addEventListener('change', () => {
+  selectedRouteId = null;
+  detailSelection = {kind: 'target', id: null};
+  tcpPortInput.disabled = methodSelect.value === 'icmp';
+  if (currentTopology) renderTopology(currentTopology);
+  readableView();
+});
+
 discoverButton.addEventListener('click', async () => {
   if (!select.value) return;
+  if (methodSelect.value !== 'icmp' && !tcpPortInput.reportValidity()) return;
 
   discoverButton.disabled = true;
   discoverButton.textContent = 'Discovering…';
-  rawOutput.textContent = 'Running Voyage / Paris MDA…';
+  rawOutput.textContent = 'Measuring ' + (methodSelect.value === 'all' ? 'ICMP + TCP' : methodSelect.value.toUpperCase()) + ' paths…';
 
   try {
+    const requestedPort = Number(tcpPortInput.value);
+    if (methodSelect.value !== 'icmp' && requestedPort !== (currentTopology?.target.tcp_port || 443)) {
+      const saved = await fetch('/api/targets/' + select.value, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tcp_port: requestedPort})
+      });
+      const result = await saved.json();
+      if (!saved.ok) throw new Error(result.detail || 'Unable to save TCP port');
+    }
+    tcpPortDirty = false;
     const response = await fetch(
-      '/api/topology/' + select.value + '/discover',
+      '/api/topology/' + select.value + '/discover?protocol=' + methodSelect.value,
       {method: 'POST'}
     );
     const data = await response.json();
@@ -442,6 +518,7 @@ window.addEventListener('multipath-live', event => {
 function showNodeDetails(node) {
     detailSelection = {kind: 'node', id: node.id};
     setDetails(node.address || node.label, [
+      ['Methods', (node.methods || []).join(' / ') || '—'],
       ['TTL', String(node.ttl)],
       ['Observed TTLs', (node.observed_ttls || [node.ttl]).join(' / ')],
       ['Current RTT', fmt(node.rtt_ms) + ' ms'],

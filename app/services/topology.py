@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import ipaddress
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -14,10 +16,12 @@ from ..models import (
     TopologyEdge,
     TopologyNode,
     TopologySnapshot,
+    TopologyProbeState,
 )
 from ..websocket import manager
 from .topology_parser import TopologyObservation, parse_voyage_flat
-from .voyage import run_voyage
+from .voyage import run_voyage, resolve_target
+from .tcp import run_tcp_trace, parse_tcp_traces
 
 
 def route_label(index: int) -> str:
@@ -27,6 +31,10 @@ def route_label(index: int) -> str:
         value, remainder = divmod(value - 1, 26)
         letters = chr(65 + remainder) + letters
     return f"Route {letters}"
+
+
+class DiscoveryFailure(RuntimeError):
+    """All selected engines failed; their scoped error states are already saved."""
 
 
 class TopologyService:
@@ -66,12 +74,18 @@ class TopologyService:
                     break
                 try:
                     await self.discover(target_id)
+                except DiscoveryFailure:
+                    pass
                 except Exception as exc:
                     self._record_failure(target_id, exc)
 
             await asyncio.sleep(settings.topology_interval_seconds)
 
-    async def discover(self, target_id: int, *, include_raw: bool = False) -> dict:
+    async def discover(
+        self, target_id: int, *, include_raw: bool = False, protocol: str = "all",
+    ) -> dict:
+        if protocol not in {"all", "icmp", "tcp"}:
+            raise ValueError("Unsupported topology protocol")
         async with self._locks[target_id]:
             with SessionLocal() as db:
                 target = db.get(Target, target_id)
@@ -79,43 +93,72 @@ class TopologyService:
                     raise ValueError("Target not found")
                 if not target.enabled:
                     raise ValueError("Target is disabled")
-                address = target.address
+                address, tcp_port = target.address, target.tcp_port
 
-            result = await run_voyage(address)
-            if result.return_code != 0:
-                detail = result.stderr.strip() or result.stdout.strip() or "Unknown Voyage error"
-                raise RuntimeError(
-                    f"Voyage exited with code {result.return_code}: {detail[:500]}"
-                )
-
+            methods = ["icmp", "tcp"] if protocol == "all" else [protocol]
+            if protocol == "all" and not settings.tcp_enabled:
+                methods = ["icmp"]
+            # Compare the same resolved destination, including hosts with multiple A records.
             try:
-                observation = parse_voyage_flat(result.stdout, result.resolved_ip, max_ttl=result.max_ttl)
-            except ValueError as exc:
-                raise RuntimeError(f"Unable to parse Voyage output: {exc}") from exc
-
-            self._persist(target_id, result.resolved_ip, observation)
+                resolved_ip = await resolve_target(address)
+                if ipaddress.ip_address(resolved_ip).version != 4:
+                    raise ValueError("Topology tracing currently supports IPv4 only")
+            except (OSError, ValueError) as exc:
+                for method in methods:
+                    self._record_failure(target_id, exc, protocol=method, destination_port=tcp_port if method == "tcp" else 0)
+                with SessionLocal() as db:
+                    payload = topology_payload(db, target_id)
+                await manager.broadcast({"type": "topology_update", "target_id": target_id, "topology": payload})
+                raise DiscoveryFailure(str(exc)) from exc
+            raw, errors, successes = [], {}, 0
+            for method in methods:
+                port = tcp_port if method == "tcp" else 0
+                try:
+                    if method == "icmp":
+                        result = await run_voyage(resolved_ip)
+                        if result.return_code != 0:
+                            detail = result.stderr.strip() or result.stdout.strip() or "Unknown Voyage error"
+                            raise RuntimeError(f"Voyage exited with code {result.return_code}: {detail[:500]}")
+                        observation = parse_voyage_flat(result.stdout, resolved_ip, max_ttl=result.max_ttl)
+                        output = result.stdout
+                    else:
+                        result = await run_tcp_trace(resolved_ip, tcp_port)
+                        observation = parse_tcp_traces(result)
+                        output = "\n\n".join(
+                            f"Flow {index + 1} · TCP {source_port} → {tcp_port}\n{trace}"
+                            for index, (source_port, trace) in enumerate(zip(result.source_ports, result.traces))
+                        )
+                    self._persist(target_id, resolved_ip, observation, protocol=method, destination_port=port)
+                    successes += 1
+                    if include_raw:
+                        raw.append(f"=== {method.upper()}{(':' + str(port)) if port else ''} ===\n{output}\n{result.stderr}")
+                except (OSError, RuntimeError, ValueError) as exc:
+                    errors[method] = str(exc)[:500]
+                    self._record_failure(target_id, exc, protocol=method, destination_port=port)
+                    if include_raw:
+                        raw.append(f"=== {method.upper()} failed ===\n{errors[method]}")
 
             with SessionLocal() as db:
                 payload = topology_payload(db, target_id)
-
-            await manager.broadcast(
-                {
-                    "type": "topology_update",
-                    "target_id": target_id,
-                    "topology": payload,
-                }
-            )
-
+            await manager.broadcast({"type": "topology_update", "target_id": target_id, "topology": payload})
+            if not successes:
+                raise DiscoveryFailure("; ".join(f"{method.upper()}: {error}" for method, error in errors.items()))
             if include_raw:
-                payload = dict(payload)
-                payload["raw_output"] = result.stdout
-                payload["stderr"] = result.stderr
+                payload = dict(payload, raw_output="\n\n".join(raw), scan_errors=errors)
             return payload
 
     @staticmethod
-    def _record_failure(target_id: int, exc: Exception) -> None:
-        message = f"Topology discovery failed: {str(exc)[:500]}"
+    def _record_failure(
+        target_id: int, exc: Exception, *, protocol: str = "icmp", destination_port: int = 0,
+    ) -> None:
+        scope = f"{protocol.upper()}{(':' + str(destination_port)) if destination_port else ''}"
+        message = f"{scope} topology discovery failed: {str(exc)[:500]}"
         with SessionLocal() as db:
+            if not db.get(Target, target_id):
+                return
+            state = probe_state(db, target_id, protocol, destination_port)
+            state.last_attempt = datetime.now(timezone.utc)
+            state.error = str(exc)[:500]
             latest = db.scalar(
                 select(Event)
                 .where(
@@ -134,13 +177,14 @@ class TopologyService:
                         message=message,
                     )
                 )
-                db.commit()
+            db.commit()
 
     @staticmethod
     def _persist(
         target_id: int,
         resolved_ip: str,
         observation: TopologyObservation,
+        *, protocol: str = "icmp", destination_port: int = 0,
     ) -> None:
         now = datetime.now(timezone.utc)
 
@@ -154,6 +198,8 @@ class TopologyService:
                     target_id=target_id,
                     created_at=now,
                     resolved_ip=resolved_ip,
+                    protocol=protocol,
+                    destination_port=destination_port,
                     probe_count=observation.probe_count,
                     node_count=len(observation.nodes),
                     edge_count=len(observation.edges),
@@ -161,83 +207,87 @@ class TopologyService:
                 )
             )
 
-            existing_nodes = {
-                (node.ttl, node.address): node
-                for node in db.scalars(
-                    select(TopologyNode).where(TopologyNode.target_id == target_id)
-                )
-            }
-            for node in existing_nodes.values():
-                node.active = False
-
-            for item in observation.nodes:
-                key = (item.ttl, item.address)
-                node = existing_nodes.get(key)
-                if node is None:
-                    node = TopologyNode(
-                        target_id=target_id,
-                        ttl=item.ttl,
-                        address=item.address,
-                        first_seen=now,
-                        last_seen=now,
+            if protocol == "icmp":
+                existing_nodes = {
+                    (node.ttl, node.address): node
+                    for node in db.scalars(
+                        select(TopologyNode).where(TopologyNode.target_id == target_id)
                     )
-                    db.add(node)
-                    db.flush()
-                    existing_nodes[key] = node
+                }
+                for node in existing_nodes.values():
+                    node.active = False
 
-                old_count = node.sample_count
-                node.active = True
-                node.last_seen = now
-                node.last_rtt_ms = item.rtt_ms
-                node.sample_count += item.samples
-                if item.rtt_ms is not None:
-                    if node.average_rtt_ms is None or old_count == 0:
-                        node.average_rtt_ms = item.rtt_ms
-                    else:
-                        node.average_rtt_ms = (
-                            (node.average_rtt_ms * old_count)
-                            + (item.rtt_ms * item.samples)
-                        ) / max(1, old_count + item.samples)
+                for item in observation.nodes:
+                    key = (item.ttl, item.address)
+                    node = existing_nodes.get(key)
+                    if node is None:
+                        node = TopologyNode(
+                            target_id=target_id,
+                            ttl=item.ttl,
+                            address=item.address,
+                            first_seen=now,
+                            last_seen=now,
+                        )
+                        db.add(node)
+                        db.flush()
+                        existing_nodes[key] = node
 
-            existing_edges = {
-                (edge.source_node_id, edge.destination_node_id): edge
-                for edge in db.scalars(
-                    select(TopologyEdge).where(TopologyEdge.target_id == target_id)
-                )
-            }
-            for edge in existing_edges.values():
-                edge.active = False
+                    old_count = node.sample_count
+                    node.active = True
+                    node.last_seen = now
+                    node.last_rtt_ms = item.rtt_ms
+                    node.sample_count += item.samples
+                    if item.rtt_ms is not None:
+                        if node.average_rtt_ms is None or old_count == 0:
+                            node.average_rtt_ms = item.rtt_ms
+                        else:
+                            node.average_rtt_ms = (
+                                (node.average_rtt_ms * old_count)
+                                + (item.rtt_ms * item.samples)
+                            ) / max(1, old_count + item.samples)
 
-            for item in observation.edges:
-                source = existing_nodes.get((item.source_ttl, item.source_address))
-                destination = existing_nodes.get(
-                    (item.destination_ttl, item.destination_address)
-                )
-                if source is None or destination is None:
-                    continue
-
-                key = (source.id, destination.id)
-                edge = existing_edges.get(key)
-                if edge is None:
-                    edge = TopologyEdge(
-                        target_id=target_id,
-                        source_node_id=source.id,
-                        destination_node_id=destination.id,
-                        sample_count=0,
-                        first_seen=now,
-                        last_seen=now,
+                existing_edges = {
+                    (edge.source_node_id, edge.destination_node_id): edge
+                    for edge in db.scalars(
+                        select(TopologyEdge).where(TopologyEdge.target_id == target_id)
                     )
-                    db.add(edge)
-                    existing_edges[key] = edge
+                }
+                for edge in existing_edges.values():
+                    edge.active = False
 
-                edge.active = True
-                edge.last_seen = now
-                edge.sample_count += 1
+                for item in observation.edges:
+                    source = existing_nodes.get((item.source_ttl, item.source_address))
+                    destination = existing_nodes.get(
+                        (item.destination_ttl, item.destination_address)
+                    )
+                    if source is None or destination is None:
+                        continue
+
+                    key = (source.id, destination.id)
+                    edge = existing_edges.get(key)
+                    if edge is None:
+                        edge = TopologyEdge(
+                            target_id=target_id,
+                            source_node_id=source.id,
+                            destination_node_id=destination.id,
+                            sample_count=0,
+                            first_seen=now,
+                            last_seen=now,
+                        )
+                        db.add(edge)
+                        existing_edges[key] = edge
+
+                    edge.active = True
+                    edge.last_seen = now
+                    edge.sample_count += 1
 
             existing_paths = {
                 route.path_hash: route
                 for route in db.scalars(
-                    select(RoutePath).where(RoutePath.target_id == target_id)
+                    select(RoutePath).where(
+                        RoutePath.target_id == target_id, RoutePath.protocol == protocol,
+                        RoutePath.destination_port == destination_port,
+                    )
                 )
             }
             next_index = (
@@ -251,15 +301,21 @@ class TopologyService:
             seen_hashes: set[str] = set()
 
             for item in observation.paths:
-                seen_hashes.add(item.path_hash)
-                route = existing_paths.get(item.path_hash)
+                # Preserve old ICMP hashes; include TCP protocol/port in the stable path identity.
+                path_hash = item.path_hash if protocol == "icmp" else hashlib.sha256(
+                    f"{protocol}:{destination_port}:{item.path_hash}".encode()
+                ).hexdigest()[:20]
+                seen_hashes.add(path_hash)
+                route = existing_paths.get(path_hash)
                 is_new = route is None
                 previous_status = route.status if route else None
 
                 if route is None:
                     route = RoutePath(
                         target_id=target_id,
-                        path_hash=item.path_hash,
+                        path_hash=path_hash,
+                        protocol=protocol,
+                        destination_port=destination_port,
                         route_index=next_index,
                         first_seen=now,
                         last_seen=now,
@@ -268,10 +324,11 @@ class TopologyService:
                     next_index += 1
                     db.add(route)
                     db.flush()
-                    existing_paths[item.path_hash] = route
+                    existing_paths[path_hash] = route
 
                 route.active = True
                 route.complete = item.complete
+                route.endpoint_response = item.endpoint_response
                 route.hop_count = len(item.hops)
                 route.flow_count = item.flow_count
                 route.destination_rtt_ms = item.destination_rtt_ms
@@ -333,7 +390,7 @@ class TopologyService:
                     hop.rtt_ms = hop_item.rtt_ms
                     hop.samples = hop_item.samples
 
-                label = route_label(route.route_index)
+                label = scoped_route_label(route)
                 if is_new:
                     db.add(
                         Event(
@@ -395,13 +452,32 @@ class TopologyService:
                             severity="warning",
                             event_type="route_missing",
                             message=(
-                                f"{route_label(route.route_index)} disappeared "
+                                f"{scoped_route_label(route)} disappeared "
                                 "from the current topology"
                             ),
                         )
                     )
 
+            state = probe_state(db, target_id, protocol, destination_port)
+            state.last_attempt = state.last_success = now
+            state.error = None
             db.commit()
+
+
+def scoped_route_label(route: RoutePath) -> str:
+    label = route_label(route.route_index)
+    return label if route.protocol == "icmp" else f"TCP:{route.destination_port} {label}"
+
+
+def probe_state(db, target_id: int, protocol: str, destination_port: int) -> TopologyProbeState:
+    state = db.scalar(select(TopologyProbeState).where(
+        TopologyProbeState.target_id == target_id, TopologyProbeState.protocol == protocol,
+        TopologyProbeState.destination_port == destination_port,
+    ))
+    if not state:
+        state = TopologyProbeState(target_id=target_id, protocol=protocol, destination_port=destination_port)
+        db.add(state)
+    return state
 
 
 def topology_payload(db, target_id: int) -> dict:
@@ -447,6 +523,7 @@ def topology_payload(db, target_id: int) -> dict:
             select(RoutePath)
             .where(
                 RoutePath.target_id == target_id,
+                (RoutePath.protocol == "icmp") | ((RoutePath.protocol == "tcp") & (RoutePath.destination_port == target.tcp_port)),
                 (RoutePath.active.is_(True))
                 | (RoutePath.last_seen >= cutoff),
             )
@@ -471,8 +548,13 @@ def topology_payload(db, target_id: int) -> dict:
     }
     latest_snapshot = db.scalar(
         select(TopologySnapshot)
-        .where(TopologySnapshot.target_id == target_id)
-        .order_by(desc(TopologySnapshot.created_at))
+        .where(
+            TopologySnapshot.target_id == target_id,
+            (TopologySnapshot.protocol == "icmp") | (
+                (TopologySnapshot.protocol == "tcp") & (TopologySnapshot.destination_port == target.tcp_port)
+            ),
+        )
+        .order_by(desc(TopologySnapshot.created_at), desc(TopologySnapshot.id))
         .limit(1)
     )
 
@@ -495,6 +577,8 @@ def topology_payload(db, target_id: int) -> dict:
                 else f"TTL {node.ttl}\n{node.address}"
             ),
             "ttl": node.ttl,
+            "protocol": "icmp",
+            "destination_port": 0,
             "address": node.address,
             "rtt_ms": node.last_rtt_ms,
             "average_rtt_ms": node.average_rtt_ms,
@@ -508,6 +592,7 @@ def topology_payload(db, target_id: int) -> dict:
     graph_edges = [
         {
             "id": f"edge-{edge.id}",
+            "protocol": "icmp",
             "source": f"node-{edge.source_node_id}",
             "target": f"node-{edge.destination_node_id}",
             "active": edge.active,
@@ -544,31 +629,32 @@ def topology_payload(db, target_id: int) -> dict:
         hops = []
         node_path = []
         for hop in hops_by_route[route.id]:
-            node_id = (
-                node_lookup.get((hop.ttl, hop.address))
-                if hop.address is not None
-                else None
-            )
+            node_id = None
+            if hop.address is not None:
+                if route.protocol == "icmp":
+                    cached_id = node_lookup.get((hop.ttl, hop.address))
+                    node_id = f"node-{cached_id}" if cached_id is not None else None
+                else:
+                    node_id = f"tcp-{route.destination_port}-{hop.ttl}-{hop.address}"
             if node_id is not None:
-                node_path.append(f"node-{node_id}")
+                node_path.append(node_id)
             hops.append(
                 {
                     "ttl": hop.ttl,
                     "address": hop.address,
                     "rtt_ms": hop.rtt_ms,
                     "samples": hop.samples,
-                    "node_id": (
-                        f"node-{node_id}"
-                        if node_id is not None
-                        else None
-                    ),
+                    "node_id": node_id,
                 }
             )
 
         route_payload.append(
             {
                 "id": route.id,
-                "label": route_label(route.route_index),
+                "label": scoped_route_label(route),
+                "protocol": route.protocol,
+                "destination_port": route.destination_port,
+                "endpoint_response": route.endpoint_response,
                 "path_hash": route.path_hash,
                 "active": route.active,
                 "status": route.status,
@@ -589,11 +675,60 @@ def topology_payload(db, target_id: int) -> dict:
             }
         )
 
+    # Each TCP adjacency comes exclusively from consecutive hops of a single stored TCP path.
+    # Never fill a missing TCP hop with an ICMP reply, even at the same TTL.
+    tcp_nodes, tcp_edges = {}, {}
+    for route in route_payload:
+        if route["protocol"] != "tcp":
+            continue
+        for hop in route["hops"]:
+            if not hop["node_id"]:
+                continue
+            node = dict(hop, id=hop["node_id"], protocol="tcp", destination_port=route["destination_port"],
+                        active=route["active"], last_seen=route["last_seen"], average_rtt_ms=None)
+            previous = tcp_nodes.get(node["id"])
+            if previous is None or (node["active"], node["last_seen"]) > (previous["active"], previous["last_seen"]):
+                tcp_nodes[node["id"]] = node
+        for first, second in zip(route["hops"], route["hops"][1:]):
+            if not first["node_id"] or not second["node_id"] or second["ttl"] != first["ttl"] + 1:
+                continue
+            key = (first["node_id"], second["node_id"])
+            edge = dict(id="tcp-edge-" + "-".join(key), source=key[0], target=key[1], protocol="tcp",
+                        active=route["active"], samples=min(first["samples"], second["samples"]), last_seen=route["last_seen"])
+            if key not in tcp_edges or route["active"]:
+                tcp_edges[key] = edge
+    graph_nodes.extend(tcp_nodes.values())
+    graph_edges.extend(tcp_edges.values())
+
+    measurements = []
+    for protocol, port in (("icmp", 0), ("tcp", target.tcp_port)):
+        snapshot = db.scalar(select(TopologySnapshot).where(
+            TopologySnapshot.target_id == target_id, TopologySnapshot.protocol == protocol,
+            TopologySnapshot.destination_port == port,
+        ).order_by(desc(TopologySnapshot.created_at), desc(TopologySnapshot.id)).limit(1))
+        state = db.scalar(select(TopologyProbeState).where(
+            TopologyProbeState.target_id == target_id, TopologyProbeState.protocol == protocol,
+            TopologyProbeState.destination_port == port,
+        ))
+        scoped_routes = [route for route in route_payload if route["protocol"] == protocol]
+        measurements.append({
+            "protocol": protocol, "destination_port": port,
+            "engine": "Voyage / Paris MDA" if protocol == "icmp" else "TCP SYN / sampled flows",
+            "last_scan": snapshot.created_at.isoformat() if snapshot else None,
+            "last_attempt": state.last_attempt.isoformat() if state else None,
+            "error": state.error if state else None,
+            "probe_replies": snapshot.probe_count if snapshot else 0,
+            "active_routes": sum(route["active"] for route in scoped_routes),
+            "complete_routes": sum(route["active"] and route["complete"] for route in scoped_routes),
+            "missing_routes": sum(not route["active"] for route in scoped_routes),
+        })
+
     return {
         "target": {
             "id": target.id,
             "name": target.name,
             "address": target.address,
+            "tcp_port": target.tcp_port,
             "status": target.status,
             "latency_ms": target.latency_ms,
             "loss_percent": target.loss_percent,
@@ -610,13 +745,9 @@ def topology_payload(db, target_id: int) -> dict:
                 route.status == "missing" for route in routes
             ),
             "excluded_routes": excluded_routes,
-            "nodes": len(nodes),
-            "edges": len(edges),
-            "probe_replies": (
-                latest_snapshot.probe_count
-                if latest_snapshot
-                else 0
-            ),
+            "nodes": len(graph_nodes) - 1,
+            "edges": len(graph_edges),
+            "probe_replies": sum(measurement["probe_replies"] for measurement in measurements),
             "last_scan": (
                 latest_snapshot.created_at.isoformat()
                 if latest_snapshot
@@ -626,6 +757,7 @@ def topology_payload(db, target_id: int) -> dict:
         "nodes": graph_nodes,
         "edges": graph_edges,
         "routes": route_payload,
+        "measurements": measurements,
     }
 
 

@@ -113,6 +113,7 @@ class MonitorService:
             'name': target.name,
             'address': target.address,
             'enabled': target.enabled,
+            'tcp_port': target.tcp_port,
             'status': target.status,
             'latency_ms': target.latency_ms,
             'loss_percent': target.loss_percent,
