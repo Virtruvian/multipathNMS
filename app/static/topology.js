@@ -25,17 +25,17 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'border-width': 0,
       'label': 'data(label)',
       'color': '#e5e7eb',
-      'font-size': 11,
+      'font-size': 14,
       'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
       'text-valign': 'bottom',
       'text-margin-y': 8,
       'text-wrap': 'wrap',
-      'text-max-width': 155,
+      'text-max-width': 190,
       'text-background-color': '#0b1621',
       'text-background-opacity': 0.92,
       'text-background-padding': 4,
-      'width': 64,
-      'height': 52
+      'width': 74,
+      'height': 60
     }},
     {selector: 'node[role = "source"], node[role = "destination"]', style: {
       'border-color': '#5eead4', 'border-width': 2, 'border-style': 'dashed',
@@ -54,12 +54,12 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'target-arrow-shape': 'triangle',
       'curve-style': 'bezier',
       'label': 'data(label)',
-      'font-size': 10,
-      'color': '#8faec2',
+      'font-size': 12,
+      'color': '#bad5e8',
       'text-rotation': 'autorotate',
       'text-margin-y': -10,
       'text-wrap': 'wrap',
-      'text-max-width': 130,
+      'text-max-width': 165,
       'text-background-color': '#0b1621',
       'text-background-opacity': 0.95,
       'text-background-padding': 3
@@ -148,9 +148,9 @@ function highlightRoute(route) {
 function readableView() {
   if (!cy || !cy.nodes().length) return;
   cy.fit(cy.elements(), 65);
-  if (cy.zoom() < 0.65) {
-    cy.zoom(0.85);
-    cy.pan({x: 90, y: cy.height() / 2});
+  if (cy.zoom() < 0.9) {
+    cy.zoom(1);
+    cy.pan({x: 110, y: cy.height() / 2});
   } else if (cy.zoom() > 1.1) {
     cy.zoom(1.1);
     cy.center();
@@ -175,6 +175,31 @@ document.getElementById('graph-fit').addEventListener('click', () => {
   if (cy) cy.fit(cy.elements(), 65);
 });
 document.getElementById('graph-readable').addEventListener('click', readableView);
+const graphPanel = document.querySelector('.topology-panel');
+const expandButton = document.getElementById('graph-expand');
+let expandedViewport = null;
+function setGraphExpanded(expanded) {
+  if (expanded && cy) expandedViewport = {zoom: cy.zoom(), pan: {...cy.pan()}, targetId: graphTargetId};
+  graphPanel.classList.toggle('graph-expanded', expanded);
+  document.body.classList.toggle('graph-expanded-active', expanded);
+  expandButton.textContent = expanded ? 'Restore' : 'Expand';
+  expandButton.setAttribute('aria-expanded', String(expanded));
+  requestAnimationFrame(() => {
+    if (!cy) return;
+    cy.resize();
+    if (!expanded && expandedViewport && expandedViewport.targetId === graphTargetId) {
+      cy.zoom(expandedViewport.zoom);
+      cy.pan(expandedViewport.pan);
+    } else readableView();
+  });
+}
+expandButton.addEventListener('click', () => setGraphExpanded(!graphPanel.classList.contains('graph-expanded')));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && graphPanel.classList.contains('graph-expanded')) {
+    setGraphExpanded(false);
+    expandButton.focus();
+  }
+});
 document.getElementById('graph-all').addEventListener('click', () => {
   selectedRouteId = null;
   if (cy) cy.elements().removeClass('selected-route route-dimmed');

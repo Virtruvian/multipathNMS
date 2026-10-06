@@ -75,8 +75,8 @@
       const group = columns.get(ttl).sort((a, b) => rank(a) - rank(b)
         || String(a.address || a.id).localeCompare(String(b.address || b.id)));
       group.forEach((node, row) => positions.set(node.id, {
-        x: column * 190,
-        y: (row - (group.length - 1) / 2) * 160
+        x: column * 230,
+        y: (row - (group.length - 1) / 2) * 190
       }));
     });
 

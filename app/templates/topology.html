@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Topology · multipathNMS{% endblock %}
+{% block main_class %}topology-page{% endblock %}
 {% block head %}
 <script src="https://unpkg.com/cytoscape@3.32.0/dist/cytoscape.min.js"></script>
 {% endblock %}
@@ -38,6 +39,7 @@
     </div>
     <div class="graph-controls" aria-label="Topology controls">
       <div class="graph-direction">SOURCE <span>→</span> TARGET</div>
+      <button id="graph-expand" type="button" aria-expanded="false">Expand</button>
       <button id="graph-all" type="button">All routes</button>
       <button id="graph-fit" type="button">Fit all</button>
       <button id="graph-readable" type="button">Readable view</button>

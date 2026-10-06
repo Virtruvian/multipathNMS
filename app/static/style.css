@@ -40,6 +40,7 @@ nav a.active,nav a:hover{background:var(--panel2);color:var(--text)}
 }
 .ws-state.connected{color:var(--green)}
 main{max-width:1600px;margin:auto;padding:28px}
+main.topology-page{max-width:none;padding:24px}
 .hero-row{
   display:flex;justify-content:space-between;align-items:flex-end;
   gap:20px;margin-bottom:22px;
@@ -117,10 +118,10 @@ button:disabled{opacity:.5}
 .danger{background:#3b1b20;border-color:#6b2933;color:#fecaca}
 .topology-summary{grid-template-columns:repeat(5,minmax(130px,1fr))}
 .topology-layout{
-  display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:18px;min-height:730px;
+  display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;min-height:800px;
 }
 .topology-sidebar{display:grid;gap:18px;align-content:start}
-.topology-panel{min-height:730px;position:relative}
+.topology-panel{min-height:800px;position:relative}
 .graph-legend{
   display:flex;gap:18px;align-items:center;padding:10px 14px;flex-wrap:wrap;
   border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;
@@ -136,7 +137,10 @@ button:disabled{opacity:.5}
 .graph-controls button{font-size:11px;padding:6px 9px;background:#102333;border-color:#294055}
 .graph-direction{margin-right:auto;color:#94bdce;font-size:10px;font-weight:800;letter-spacing:.1em}
 .graph-direction span{color:var(--accent);margin:0 8px}
-#cy{width:100%;height:610px;background:radial-gradient(circle,#233749 1px,transparent 1px);background-size:24px 24px}
+#cy{width:100%;height:clamp(680px,calc(100vh - 350px),1100px);background:radial-gradient(circle,#233749 1px,transparent 1px);background-size:24px 24px}
+.topology-panel.graph-expanded{position:fixed;inset:12px;z-index:20;display:flex;flex-direction:column;min-height:0;background:#0b1621;box-shadow:0 0 0 20px #071019e6}
+.topology-panel.graph-expanded #cy{height:auto;min-height:0;flex:1}
+body.graph-expanded-active{overflow:hidden}
 .graph-caption{padding:10px 14px;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
 .graph-empty{position:absolute;left:20%;right:20%;top:55%;text-align:center;color:var(--muted);pointer-events:none}
 .graph-empty small{display:block;font-size:11px;margin-top:6px}
@@ -164,8 +168,8 @@ pre{
 .route-state{font-size:10px;letter-spacing:.08em;color:var(--green)}
 .route-missing .route-state{color:var(--red)}
 .route-degraded .route-state{color:var(--yellow)}
-.route-card-values{font-size:12px;margin-top:7px;color:#c5d6e5}
-.route-card small{display:block;color:var(--muted);margin-top:4px}
+.route-card-values{font-size:13px;margin-top:7px;color:#c5d6e5}
+.route-card small{display:block;color:var(--muted);margin-top:4px;font-size:12px}
 .hop-list{margin:0;padding-left:22px;color:#bed0df}
 .hop-list li{margin:4px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .settings-grid{grid-template-columns:420px 1fr}
@@ -184,6 +188,7 @@ pre{
 }
 @media(max-width:900px){
   main{padding:16px}
+  main.topology-page{padding:16px}
   .grid-2,.settings-grid{grid-template-columns:1fr}
   .target-card{grid-template-columns:1fr}
   .target-stats{justify-content:flex-start}
