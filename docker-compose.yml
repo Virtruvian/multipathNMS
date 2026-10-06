@@ -19,6 +19,7 @@ services:
       TCP_ENABLED: "true"
       TCP_PORT: 443
       TCP_FLOWS: 3
+      TCP_FIXED_SOURCE_PORT: "false"
       TCP_HOP_TIMEOUT_SECONDS: 1
       TCP_SENDWAIT_SECONDS: 0.05
       SUSPECT_AFTER_FAILURES: 3

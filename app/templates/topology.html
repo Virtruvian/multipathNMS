@@ -8,7 +8,7 @@
 <section class="hero-row">
   <div>
     <h1>Network Path Analysis</h1>
-    <p>Follow measured flows from source to target. Branches show observed alternative paths.</p>
+    <p>Follow ICMP flows and sampled TCP hop sequences from source to target.</p>
   </div>
   <div class="toolbar">
     <select id="target-select">
@@ -39,14 +39,14 @@
 
 <section class="panel measurement-panel" aria-label="Measurement comparison">
   <div id="measurement-comparison" class="measurement-comparison"></div>
-  <p class="detail-note">Each method keeps its own measured paths. TCP samples several flows; gaps stay unobserved. Target health uses ICMP ping.</p>
+  <p class="detail-note">TCP samples three traces by default. Dashed blue lines show hop order; source ports may vary, so same-flow links are not confirmed. Gaps stay unobserved. Target health uses ICMP ping.</p>
 </section>
 
 <section class="topology-layout">
   <div class="panel topology-panel">
     <div class="graph-legend">
       <span><i class="legend-dot legend-active"></i>ICMP current</span>
-      <span><i class="legend-dot legend-tcp"></i>TCP current</span>
+      <span><i class="legend-dot legend-tcp"></i>TCP sampled hop order</span>
       <span><i class="legend-dot legend-degraded"></i>Degraded route</span>
       <span><i class="legend-dot legend-missing"></i>Missing/recent</span>
       <span><i class="legend-gap"></i>Unobserved hops</span>
@@ -65,7 +65,7 @@
     </div>
     <div id="cy"></div>
     <div id="graph-empty" class="graph-empty">Waiting for topology discovery…<small>Use Discover now to find the first paths.</small></div>
-    <div class="graph-caption"><span id="graph-filter-info">Current measured paths</span><br>Connections show observed flow adjacency, not verified physical links · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
+    <div class="graph-caption"><span id="graph-filter-info">Current measured paths</span><br>ICMP: flow adjacency · TCP: sampled hop order · Physical links are not verified · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
   </div>
 
   <aside class="topology-sidebar">

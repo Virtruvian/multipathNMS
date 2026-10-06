@@ -11,8 +11,9 @@ A lightweight live route and multipath NMS built around Paris-style MDA discover
 The topology view is a network path analysis: a straight primary path runs from
 source to target, with alternatives branching and merging. A shared target endpoint
 represents paths with different measured hop counts; their original TTLs remain in
-route details. Hops show IP, TTL and RTT from the probe. Links represent observed
-same-flow adjacency, not verified physical cables or OSPF neighbours. Dotted segments
+route details. Hops show IP, TTL and RTT from the probe. ICMP links represent observed
+same-flow adjacency; dashed blue TCP lines show hop order within a sampled trace.
+Neither verifies physical cables or OSPF neighbours. Dotted segments
 explicitly indicate unobserved or ambiguous hops. **Router symbols** switches the
 compact path markers to router icons.
 Select a route to highlight it, drag to pan, and use **Fit all** or **Readable view**
@@ -54,11 +55,20 @@ ICMP links are green; TCP links are blue. Degraded and missing paths retain thei
 amber/red status colours. Intermediate nodes and measured adjacencies stay scoped
 by protocol and port: a silent TCP hop is never filled with an ICMP reply.
 
-TCP uses three sampled flows by default. Each flow keeps its source and destination
-ports constant while increasing TTL, with one outstanding probe and one query per
-hop. This reduces flow changes within a trace; per-packet load balancing and route
-changes during a measurement can still affect the observed sequence. TCP sampling
-supplements ICMP MDA and has no MDA completeness/confidence guarantee.
+TCP runs three sampled traces by default, with a fixed destination port but
+source ports chosen automatically by Linux, one outstanding probe and one query
+per hop. On the tested deployment, fixed source ports produced only replies up
+to TTL 6; the otherwise identical automatic-port trace reached the endpoint at
+TTL 28. This identifies a useful compatibility setting without proving which
+network device or filtering rule caused the difference.
+Automatic source ports can select different ECMP flows between hops. TCP lines
+therefore represent sampled hop order, not confirmed same-flow adjacency. Each
+trace stays separate during parsing: one trace never supplies another's missing
+hop. TCP supplements ICMP MDA and has no MDA completeness/confidence guarantee.
+`TCP_FIXED_SOURCE_PORT=true` opts into the previous fixed-port probing mode for
+diagnostics. The UI conservatively labels all TCP results as sampled traces,
+including stored history. `flow_count` remains the existing storage/API field but
+counts matching trace runs for TCP; the UI labels it **Trace samples**.
 Both engines use the same resolved IPv4 address within a comparison round.
 
 Set **TCP port** in the topology toolbar and click **Discover now** to save it for
@@ -84,7 +94,7 @@ Per route the UI keeps:
 - learned RTT baseline
 - route-presence availability
 - hop count
-- protocol, destination port and sampled/MDA flow count
+- protocol, destination port and TCP trace sample / ICMP MDA flow count
 - first seen / last seen / last change
 - per-hop RTT
 
@@ -139,6 +149,7 @@ VOYAGE_MAX_TTL=32
 TCP_ENABLED=true
 TCP_PORT=443
 TCP_FLOWS=3
+TCP_FIXED_SOURCE_PORT=false
 TCP_HOP_TIMEOUT_SECONDS=1
 TCP_SENDWAIT_SECONDS=0.05
 SUSPECT_AFTER_FAILURES=3
@@ -150,9 +161,9 @@ DEGRADED_LATENCY_MULTIPLIER=2
 `TCP_ENABLED=false` skips TCP in automatic/comparison rounds; explicit manual TCP
 discovery remains available. `TCP_PORT` supplies the default for new targets and
 existing databases during migration. Each target then keeps its own saved port.
-TCP shares `VOYAGE_MAX_TTL`. Each flow has a timeout bound of
+TCP shares `VOYAGE_MAX_TTL`. Each trace has a timeout bound of
 `max_ttl × (hop_timeout + sendwait) + 5` seconds; a round includes all configured
-flows plus the ICMP scan. IPv4 topology is supported in this version.
+traces plus the ICMP scan. IPv4 topology is supported in this version.
 
 Avoid setting topology discovery to very short intervals: MDA intentionally sends substantially more probes than a normal ping.
 

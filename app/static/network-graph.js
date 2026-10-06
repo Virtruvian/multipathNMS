@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
 
-  // Display relationships between measured flows, never physical router links.
+  // Display ICMP flow adjacency and TCP sampled hop order, never physical router links.
   function build(data, {showLooseReplies = false, showHistory = true, protocol = 'all'} = {}) {
     const maxTTL = Number(data.max_ttl || 32);
     const scopedRoutes = (data.routes || []).filter(route => protocol === 'all' || (route.protocol || 'icmp') === protocol);
@@ -74,7 +74,7 @@
         const gap = Number(rawNodes.get(oldTarget).ttl) - Number(rawNodes.get(oldSource).ttl) - 1;
         if (source === target || gap < 0) continue;
         const observation = measured.get(key(oldSource, oldTarget));
-        // Only a same-flow gap or probe origin may be drawn without an observed adjacency.
+        // Only a same-trace gap or probe origin may be drawn without consecutive replies.
         if (!observation && gap === 0 && oldSource !== 'probe') continue;
         const kind = gap > 0 ? 'gap' : oldSource === 'probe' ? 'source' : 'observed';
         const pair = JSON.stringify([source, target, kind, gap]);

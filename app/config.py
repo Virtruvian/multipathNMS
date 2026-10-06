@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     tcp_enabled: bool = True
     tcp_port: int = Field(default=443, ge=1, le=65535)
     tcp_flows: int = Field(default=3, ge=1, le=8)
+    tcp_fixed_source_port: bool = False
     tcp_hop_timeout_seconds: float = Field(default=1.0, ge=0.1, le=5.0)
     tcp_sendwait_seconds: float = Field(default=0.05, ge=0.01, le=1.0)
     suspect_after_failures: int = 3

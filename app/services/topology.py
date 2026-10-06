@@ -125,7 +125,7 @@ class TopologyService:
                         result = await run_tcp_trace(resolved_ip, tcp_port)
                         observation = parse_tcp_traces(result)
                         output = "\n\n".join(
-                            f"Flow {index + 1} · TCP {source_port} → {tcp_port}\n{trace}"
+                            f"Trace {index + 1} · TCP {source_port if source_port is not None else 'automatic source ports'} → {tcp_port}\n{trace}"
                             for index, (source_port, trace) in enumerate(zip(result.source_ports, result.traces))
                         )
                     self._persist(target_id, resolved_ip, observation, protocol=method, destination_port=port)
@@ -713,7 +713,7 @@ def topology_payload(db, target_id: int) -> dict:
         scoped_routes = [route for route in route_payload if route["protocol"] == protocol]
         measurements.append({
             "protocol": protocol, "destination_port": port,
-            "engine": "Voyage / Paris MDA" if protocol == "icmp" else "TCP SYN / sampled flows",
+            "engine": "Voyage / Paris MDA" if protocol == "icmp" else "TCP SYN / sampled traces",
             "last_scan": snapshot.created_at.isoformat() if snapshot else None,
             "last_attempt": state.last_attempt.isoformat() if state else None,
             "error": state.error if state else None,

@@ -1,4 +1,4 @@
-"""Bounded TCP SYN traces, with one fixed source/destination port per flow."""
+"""Bounded TCP SYN traces with automatic source ports by default."""
 
 import asyncio
 import ipaddress
@@ -22,7 +22,7 @@ FLAGS = re.compile(r"<([^>]+)>")
 class TcpResult:
     resolved_ip: str
     traces: tuple[str, ...]
-    source_ports: tuple[int, ...]
+    source_ports: tuple[int | None, ...]
     destination_port: int
     max_ttl: int
     stderr: str = ""
@@ -35,13 +35,14 @@ async def run_tcp_trace(target: str, destination_port: int = 443) -> TcpResult:
     if ipaddress.ip_address(resolved_ip).version != 4:
         raise ValueError("Topology tracing currently supports IPv4 only")
     traces, errors, ports = [], [], []
-    # Disjoint ports within this scan; each flow holds its port constant across TTLs.
+    # Fixed ports are opt-in: some networks stop answering that probe sequence.
     first_port = 40000 + secrets.randbelow(20000 - settings.tcp_flows)
     for offset in range(settings.tcp_flows):
-        source_port = first_port + offset
+        source_port = first_port + offset if settings.tcp_fixed_source_port else None
+        source_args = [f"--sport={source_port}"] if source_port is not None else []
         process = await asyncio.create_subprocess_exec(
             "traceroute", "-4", "-n", "-T", "-O", "info",
-            f"--sport={source_port}", "-N", "1", "-q", "1",
+            *source_args, "-N", "1", "-q", "1",
             "-m", str(settings.voyage_max_ttl),
             "-w", str(settings.tcp_hop_timeout_seconds),
             "-z", str(settings.tcp_sendwait_seconds),
@@ -72,14 +73,14 @@ async def run_tcp_trace(target: str, destination_port: int = 443) -> TcpResult:
 
 
 def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
-    """Normalize engine output without joining TTLs from different TCP flows."""
+    """Keep each trace separate; automatic ports do not prove same-flow links."""
     records = []
     responses: dict[tuple[str | None, ...], set[str]] = {}
     destination_rtts: dict[tuple[str | None, ...], list[float]] = {}
     valid_rows = 0
     if not result.traces or len(result.traces) != len(result.source_ports):
         raise ValueError("TCP trace flow metadata is incomplete")
-    for output, source_port in zip(result.traces, result.source_ports):
+    for trace_index, output in enumerate(result.traces):
         if not re.search(r"^traceroute to " + re.escape(result.resolved_ip) + r"(?:\s|\()", output):
             raise ValueError("TCP trace output has an unexpected destination or header")
         flow_hops: dict[int, str] = {}
@@ -111,7 +112,8 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
                 raise ValueError("Invalid TCP RTT")
             flow_hops[ttl] = address
             records.append({
-                "probe_dst_addr": result.resolved_ip, "probe_src_port": source_port,
+                # Internal grouping key, not a claim about the on-wire source port.
+                "probe_dst_addr": result.resolved_ip, "probe_src_port": trace_index + 1,
                 "probe_dst_port": result.destination_port, "probe_protocol": 6,
                 "probe_ttl": ttl, "reply_src_addr": address, "rtt": rtt * 100,
             })

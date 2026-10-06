@@ -76,7 +76,7 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'color': '#94a3b8'
     }},
     {selector: 'edge[protocol = "tcp"][kind != "gap"]', style: {
-      'line-color': '#60a5fa', 'target-arrow-color': '#60a5fa'
+      'line-color': '#60a5fa', 'target-arrow-color': '#60a5fa', 'line-style': 'dashed'
     }},
     {selector: 'edge[kind = "diagnostic"]', style: {
       'line-style': 'dotted', 'line-color': '#64748b', 'target-arrow-color': '#64748b'
@@ -296,7 +296,7 @@ function showRouteDetails(route) {
     ['Min / Max', fmt(route.minimum_rtt_ms) + ' / ' + fmt(route.maximum_rtt_ms) + ' ms'],
     ['Availability', fmt(route.availability_percent, 2) + '%'],
     ['Hops', String(route.hop_count || 0)],
-    ['Flows', String(route.flow_count || 0)],
+    [route.protocol === 'tcp' ? 'Trace samples' : 'Flows', String(route.flow_count || 0)],
     ['Last seen', localTime(route.last_seen)]
   ], route.complete
     ? route.endpoint_response === 'reset' ? 'A TCP reset reached the probe. The endpoint replied; this does not establish an open service.' : 'The target replied on this measured path.'
@@ -537,15 +537,17 @@ function showNodeDetails(node) {
 
 function showEdgeDetails(edge) {
     detailSelection = {kind: 'edge', id: edge.id};
-    setDetails('Link', [
+    setDetails(edge.protocol === 'tcp' ? 'TCP hop sequence' : 'Link', [
       ['From', cy.getElementById(edge.source).data('address') || 'Local probe'],
       ['To', cy.getElementById(edge.target).data('address') || edge.target],
       ['Routes', (currentTopology.routes || []).filter(route => edge.route_ids.includes(route.id)).map(route => route.label).join(' / ') || '—'],
-      ['Observation', edge.kind === 'gap' ? edge.gap_hops + ' unobserved hops' : edge.kind === 'source' ? 'Probe origin' : 'Observed adjacency'],
+      ['Observation', edge.kind === 'gap' ? edge.gap_hops + ' unobserved hops' : edge.kind === 'source' ? 'Probe origin' : edge.protocol === 'tcp' ? 'Hop order within one trace' : 'Observed adjacency'],
       ['State', edge.active === '1' ? 'CURRENT' : 'RECENT / MISSING'],
       ['Samples', edge.samples === null ? '—' : String(edge.samples || 0)],
       ['Last seen', localTime(edge.last_seen)]
-    ], edge.kind === 'gap' ? 'This dotted segment bridges missing replies in the same observed flow. It is not a measured direct link or proof of an outage.' : 'Per-link latency and packet loss are not measured. RTT labels belong to the responding nodes.');
+    ], edge.protocol === 'tcp'
+      ? 'TCP segments show reply order within one trace. Source ports may vary between hops, so a single flow or direct router link is not confirmed. Gaps remain unobserved. RTT belongs to each responding node.'
+      : edge.kind === 'gap' ? 'This dotted segment bridges missing replies in the same observed flow. It is not a measured direct link or proof of an outage.' : 'Per-link latency and packet loss are not measured. RTT labels belong to the responding nodes.');
 }
 
 if (cy) {
