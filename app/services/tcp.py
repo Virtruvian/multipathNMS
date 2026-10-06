@@ -7,6 +7,7 @@ import math
 import re
 import secrets
 from dataclasses import dataclass, replace
+from statistics import median
 
 from ..config import settings
 from .topology_parser import TopologyObservation, parse_voyage_flat
@@ -40,7 +41,7 @@ async def run_tcp_trace(target: str, destination_port: int = 443) -> TcpResult:
         source_port = first_port + offset
         process = await asyncio.create_subprocess_exec(
             "traceroute", "-4", "-n", "-T", "-O", "info",
-            "--sport", str(source_port), "-N", "1", "-q", "1",
+            f"--sport={source_port}", "-N", "1", "-q", "1",
             "-m", str(settings.voyage_max_ttl),
             "-w", str(settings.tcp_hop_timeout_seconds),
             "-z", str(settings.tcp_sendwait_seconds),
@@ -74,6 +75,7 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
     """Normalize engine output without joining TTLs from different TCP flows."""
     records = []
     responses: dict[tuple[str | None, ...], set[str]] = {}
+    destination_rtts: dict[tuple[str | None, ...], list[float]] = {}
     valid_rows = 0
     if not result.traces or len(result.traces) != len(result.source_ports):
         raise ValueError("TCP trace flow metadata is incomplete")
@@ -83,6 +85,8 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
         flow_hops: dict[int, str] = {}
         endpoint_response = "no-response"
         previous_ttl = 0
+        flow_rows = 0
+        endpoint_rtt = None
         for line in output.splitlines()[1:]:
             match = ROW.match(line)
             if not match:
@@ -92,6 +96,7 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
                 raise ValueError("TCP trace has invalid or duplicate TTLs")
             previous_ttl = ttl
             valid_rows += 1
+            flow_rows += 1
             if body == "*":
                 continue
             try:
@@ -117,14 +122,20 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
                     endpoint_response = "icmp-unreachable"
                 elif {"syn", "ack"} <= flags:
                     endpoint_response = "syn-ack"
+                    endpoint_rtt = rtt
                 elif "rst" in flags:
                     endpoint_response = "reset"
+                    endpoint_rtt = rtt
                 else:
                     endpoint_response = "unconfirmed"
                 break  # No interfaces beyond the first target reply.
+        if not flow_rows:
+            raise ValueError("TCP flow returned no hop rows")
         if flow_hops:
             signature = tuple(flow_hops.get(ttl) for ttl in range(1, max(flow_hops) + 1))
             responses.setdefault(signature, set()).add(endpoint_response)
+            if endpoint_rtt is not None:
+                destination_rtts.setdefault(signature, []).append(endpoint_rtt)
     if not valid_rows:
         raise ValueError("TCP trace returned no hop rows")
     if not records:
@@ -133,11 +144,12 @@ def parse_tcp_traces(result: TcpResult) -> TopologyObservation:
     observation = parse_voyage_flat(json.dumps(records), result.resolved_ip, max_ttl=result.max_ttl)
     paths = []
     for path in observation.paths:
-        endpoint = responses[tuple(hop.address for hop in path.hops)]
+        signature = tuple(hop.address for hop in path.hops)
+        endpoint = responses[signature]
         reached = bool(endpoint & {"syn-ack", "reset"})
         paths.append(replace(
             path, complete=reached,
-            destination_rtt_ms=path.destination_rtt_ms if reached else None,
+            destination_rtt_ms=round(median(destination_rtts[signature]), 3) if reached else None,
             endpoint_response=next(iter(endpoint)) if len(endpoint) == 1 else "mixed-responses",
         ))
     return replace(observation, paths=tuple(paths), probe_count=len(records))

@@ -437,7 +437,7 @@ async function loadTopology(targetId) {
   const response = await fetch('/api/topology/' + targetId);
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || 'Unable to load topology');
-  renderTopology(data);
+  if (String(targetId) === select.value) renderTopology(data);
 }
 
 select.addEventListener('change', async () => {
@@ -457,7 +457,7 @@ tcpPortInput.addEventListener('input', () => { tcpPortDirty = true; });
 methodSelect.addEventListener('change', () => {
   selectedRouteId = null;
   detailSelection = {kind: 'target', id: null};
-  tcpPortInput.disabled = methodSelect.value === 'icmp';
+  tcpPortInput.disabled = discoverButton.disabled || methodSelect.value === 'icmp';
   if (currentTopology) renderTopology(currentTopology);
   readableView();
 });
@@ -465,15 +465,18 @@ methodSelect.addEventListener('change', () => {
 discoverButton.addEventListener('click', async () => {
   if (!select.value) return;
   if (methodSelect.value !== 'icmp' && !tcpPortInput.reportValidity()) return;
+  const scanTargetId = select.value;
+  const scanMethod = methodSelect.value;
+  const requestedPort = Number(tcpPortInput.value);
 
   discoverButton.disabled = true;
+  tcpPortInput.disabled = true;
   discoverButton.textContent = 'Discovering…';
   rawOutput.textContent = 'Measuring ' + (methodSelect.value === 'all' ? 'ICMP + TCP' : methodSelect.value.toUpperCase()) + ' paths…';
 
   try {
-    const requestedPort = Number(tcpPortInput.value);
-    if (methodSelect.value !== 'icmp' && requestedPort !== (currentTopology?.target.tcp_port || 443)) {
-      const saved = await fetch('/api/targets/' + select.value, {
+    if (scanMethod !== 'icmp' && requestedPort !== (currentTopology?.target.tcp_port || 443)) {
+      const saved = await fetch('/api/targets/' + scanTargetId, {
         method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tcp_port: requestedPort})
       });
       const result = await saved.json();
@@ -481,18 +484,21 @@ discoverButton.addEventListener('click', async () => {
     }
     tcpPortDirty = false;
     const response = await fetch(
-      '/api/topology/' + select.value + '/discover?protocol=' + methodSelect.value,
+      '/api/topology/' + scanTargetId + '/discover?protocol=' + scanMethod,
       {method: 'POST'}
     );
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Discovery failed');
 
-    rawOutput.textContent = data.raw_output || data.stderr || '(no raw output)';
-    renderTopology(data);
+    if (select.value === scanTargetId) {
+      rawOutput.textContent = data.raw_output || data.stderr || '(no raw output)';
+      renderTopology(data);
+    }
   } catch (error) {
-    rawOutput.textContent = String(error);
+    if (select.value === scanTargetId) rawOutput.textContent = String(error);
   } finally {
     discoverButton.disabled = false;
+    tcpPortInput.disabled = methodSelect.value === 'icmp';
     discoverButton.textContent = 'Discover now';
   }
 });

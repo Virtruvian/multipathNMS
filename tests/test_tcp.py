@@ -44,6 +44,14 @@ class TcpParserTests(unittest.TestCase):
         self.assertFalse(path.complete)
         self.assertEqual("unconfirmed", path.endpoint_response)
 
+    def test_mixed_endpoint_errors_do_not_pollute_tcp_response_rtt(self):
+        path = parse_tcp_traces(tcp_result(
+            "1 8.8.8.8 <syn,ack> 5 ms\n", "1 8.8.8.8 100 ms !X\n",
+        )).paths[0]
+        self.assertTrue(path.complete)
+        self.assertEqual("mixed-responses", path.endpoint_response)
+        self.assertEqual(5.0, path.destination_rtt_ms)
+
     def test_all_silent_scan_is_valid_and_never_invents_nodes(self):
         observation = parse_tcp_traces(tcp_result("1 *\n2 *\n3 *\n"))
         self.assertEqual((), observation.paths)
@@ -62,6 +70,8 @@ class TcpParserTests(unittest.TestCase):
                 parse_tcp_traces(tcp_result(body))
         with self.assertRaises(ValueError):
             parse_tcp_traces(TcpResult("8.8.8.8", ("traceroute to 1.1.1.1\n1 *\n",), (40000,), 443, 32))
+        with self.assertRaises(ValueError):
+            parse_tcp_traces(tcp_result("1 *\n", ""))
 
 
 class TcpAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -79,7 +89,7 @@ class TcpAdapterTests(unittest.IsolatedAsyncioTestCase):
             args = call.args
             self.assertEqual("traceroute", args[0])
             self.assertIn("-T", args)
-            self.assertEqual(str(40123 + index), args[args.index("--sport") + 1])
+            self.assertIn(f"--sport={40123 + index}", args)
             self.assertEqual("1", args[args.index("-q") + 1])
             self.assertEqual("1", args[args.index("-N") + 1])
             self.assertEqual("8443", args[args.index("-p") + 1])
