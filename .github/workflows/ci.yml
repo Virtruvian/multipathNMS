@@ -10,6 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate JavaScript and graph behavior
+        run: |
+          node --check app/static/network-graph.js
+          node --check app/static/topology.js
+          node --test tests/test_network_graph.js
+
   python:
     runs-on: ubuntu-latest
     steps:

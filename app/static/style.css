@@ -122,15 +122,25 @@ button:disabled{opacity:.5}
 .topology-sidebar{display:grid;gap:18px;align-content:start}
 .topology-panel{min-height:730px;position:relative}
 .graph-legend{
-  display:flex;gap:18px;align-items:center;padding:10px 14px;
+  display:flex;gap:18px;align-items:center;padding:10px 14px;flex-wrap:wrap;
   border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;
 }
 .legend-dot{
   display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;
 }
 .legend-active{background:var(--green)}
+.legend-degraded{background:var(--yellow)}
 .legend-missing{background:var(--red)}
-#cy{width:100%;height:680px}
+.legend-gap{display:inline-block;width:17px;border-top:2px dotted #94a3b8;margin-right:6px;vertical-align:middle}
+.graph-controls{display:flex;align-items:center;gap:6px;padding:10px 14px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.graph-controls button{font-size:11px;padding:6px 9px;background:#102333;border-color:#294055}
+.graph-direction{margin-right:auto;color:#94bdce;font-size:10px;font-weight:800;letter-spacing:.1em}
+.graph-direction span{color:var(--accent);margin:0 8px}
+#cy{width:100%;height:610px;background:radial-gradient(circle,#233749 1px,transparent 1px);background-size:24px 24px}
+.graph-caption{padding:10px 14px;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
+.graph-empty{position:absolute;left:20%;right:20%;top:55%;text-align:center;color:var(--muted);pointer-events:none}
+.graph-empty small{display:block;font-size:11px;margin-top:6px}
+.graph-empty[hidden]{display:none}
 .details-panel{padding-bottom:16px}
 .details{padding:16px}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}
@@ -177,7 +187,8 @@ pre{
   .grid-2,.settings-grid{grid-template-columns:1fr}
   .target-card{grid-template-columns:1fr}
   .target-stats{justify-content:flex-start}
-  .topology-panel,#cy{height:520px;min-height:520px}
+  .topology-panel{height:auto;min-height:520px}
+  #cy{height:450px}
   .hero-row{align-items:flex-start;flex-direction:column}
   .topbar{padding:0 14px;gap:12px}
   .brand{font-size:14px}

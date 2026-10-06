@@ -8,6 +8,13 @@ A lightweight live route and multipath NMS built around Paris-style MDA discover
 - **/topology** — interactive Cytoscape topology with persistent Route A/B/C identities.
 - **/settings** — manage monitored targets.
 
+The topology view uses router symbols and horizontal hop columns: source on the left,
+target on the right, with parallel paths branching and merging between them. Each
+router shows its IP, TTL and measured RTT from the probe. Links show route membership;
+dotted segments explicitly indicate unobserved hops, rather than a measured direct link.
+Select a route to highlight it, drag to pan, and use **Fit all** or **Readable view**
+to navigate large topologies. Live updates retain the viewport and route selection.
+
 ## Stack
 
 Docker → FastAPI → Voyage / Paris MDA → WebSocket → Cytoscape.js → SQLite
@@ -79,10 +86,16 @@ Avoid setting topology discovery to very short intervals: MDA intentionally send
 
 ## Tests
 
-The Voyage parser has deterministic fixture tests:
+The Voyage parser and SQLite topology persistence have deterministic fixture tests:
 
 ```bash
 python -m unittest discover -s tests -v
+```
+
+Graph preparation tests use Node.js 22 without additional npm dependencies:
+
+```bash
+node --test tests/test_network_graph.js
 ```
 
 ## Security

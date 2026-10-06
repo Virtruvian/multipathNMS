@@ -87,6 +87,11 @@ Topology route status model:
 - Cytoscape live graph
 - recent missing paths remain visible
 - parser unit tests
+- SQLite topology persistence regression tests
+- horizontal TTL-based graph with router symbols and route highlighting
+- graph gaps explicitly distinguish unobserved segments from measured links
+- graph viewport and selected route survive live updates
+- dependency-free Node.js graph tests
 
 ## Next implementation step
 

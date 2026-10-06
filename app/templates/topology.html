@@ -7,7 +7,7 @@
 <section class="hero-row">
   <div>
     <h1>Live Topology</h1>
-    <p>Paris-style multipath discovery with persistent route identities and history.</p>
+    <p>Follow the paths from source to target. Select a route to highlight its hops.</p>
   </div>
   <div class="toolbar">
     <select id="target-select">
@@ -32,10 +32,21 @@
   <div class="panel topology-panel">
     <div class="graph-legend">
       <span><i class="legend-dot legend-active"></i>Current</span>
+      <span><i class="legend-dot legend-degraded"></i>Degraded route</span>
       <span><i class="legend-dot legend-missing"></i>Missing/recent</span>
-      <span>Click a route, node or link for details.</span>
+      <span><i class="legend-gap"></i>Unobserved hops</span>
+    </div>
+    <div class="graph-controls" aria-label="Topology controls">
+      <div class="graph-direction">SOURCE <span>→</span> TARGET</div>
+      <button id="graph-all" type="button">All routes</button>
+      <button id="graph-fit" type="button">Fit all</button>
+      <button id="graph-readable" type="button">Readable view</button>
+      <button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button>
+      <button id="graph-zoom-in" type="button" aria-label="Zoom in">+</button>
     </div>
     <div id="cy"></div>
+    <div id="graph-empty" class="graph-empty">Waiting for topology discovery…<small>Use Discover now to find the first paths.</small></div>
+    <div class="graph-caption">Drag to pan · Scroll to zoom · Click a router or link for details · RTT is measured from the probe</div>
   </div>
 
   <aside class="topology-sidebar">
@@ -59,4 +70,7 @@
   </aside>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/topology.js"></script>{% endblock %}
+{% block scripts %}
+<script src="/static/network-graph.js"></script>
+<script src="/static/topology.js"></script>
+{% endblock %}

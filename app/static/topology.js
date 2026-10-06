@@ -6,59 +6,83 @@ const rawOutput = document.getElementById('voyage-output');
 
 let currentTopology = null;
 let selectedRouteId = null;
+let currentGraph = {elements: [], routePaths: {}};
+let graphTargetId = null;
+let detailSelection = {kind: 'target', id: null};
 
 const cy = typeof cytoscape === 'function' ? cytoscape({
   container: document.getElementById('cy'),
   elements: [],
-  maxZoom: 1.5,
-  layout: {name: 'breadthfirst', directed: true, padding: 45, spacingFactor: 1.25},
+  minZoom: 0.08,
+  maxZoom: 2,
+  wheelSensitivity: 0.2,
+  layout: {name: 'preset'},
   style: [
     {selector: 'node', style: {
-      'background-color': '#111f2d',
-      'border-color': '#34d399',
-      'border-width': 2,
+      'background-image': '/static/router.svg',
+      'background-fit': 'contain',
+      'background-opacity': 0,
+      'border-width': 0,
       'label': 'data(label)',
       'color': '#e5e7eb',
-      'font-size': 10,
+      'font-size': 11,
+      'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
       'text-valign': 'bottom',
       'text-margin-y': 8,
       'text-wrap': 'wrap',
-      'text-max-width': 120,
-      'width': 34,
-      'height': 34
+      'text-max-width': 155,
+      'text-background-color': '#0b1621',
+      'text-background-opacity': 0.92,
+      'text-background-padding': 4,
+      'width': 64,
+      'height': 52
     }},
-    {selector: 'node#probe', style: {
-      'shape': 'diamond',
-      'background-color': '#164e63',
-      'border-color': '#5eead4',
-      'width': 42,
-      'height': 42
+    {selector: 'node[role = "source"], node[role = "destination"]', style: {
+      'border-color': '#5eead4', 'border-width': 2, 'border-style': 'dashed',
+      'color': '#99f6e4', 'font-weight': 'bold'
     }},
     {selector: 'node[active = "0"]', style: {
       'border-color': '#f87171',
-      'background-color': '#3a1d24',
-      'opacity': 0.72
+      'border-width': 2,
+      'opacity': 0.65,
+      'color': '#fca5a5'
     }},
     {selector: 'edge', style: {
       'width': 2,
-      'line-color': '#3d5a70',
-      'target-arrow-color': '#3d5a70',
+      'line-color': '#3d9fb1',
+      'target-arrow-color': '#3d9fb1',
       'target-arrow-shape': 'triangle',
-      'curve-style': 'bezier'
+      'curve-style': 'bezier',
+      'label': 'data(label)',
+      'font-size': 10,
+      'color': '#8faec2',
+      'text-rotation': 'autorotate',
+      'text-margin-y': -10,
+      'text-wrap': 'wrap',
+      'text-max-width': 130,
+      'text-background-color': '#0b1621',
+      'text-background-opacity': 0.95,
+      'text-background-padding': 3
     }},
-    {selector: 'edge[active = "0"]', style: {
+    {selector: 'edge[kind = "gap"]', style: {
+      'line-style': 'dotted', 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8',
+      'color': '#94a3b8'
+    }},
+    {selector: 'edge[status = "degraded"]', style: {
+      'line-color': '#fbbf24', 'target-arrow-color': '#fbbf24', 'color': '#fbbf24'
+    }},
+    {selector: 'edge[status = "missing"]', style: {
       'line-color': '#f87171',
       'target-arrow-color': '#f87171',
       'line-style': 'dashed',
-      'opacity': 0.62
+      'color': '#fca5a5',
+      'opacity': 0.65
     }},
-    {selector: '.selected-route', style: {
-      'border-color': '#5eead4',
-      'line-color': '#5eead4',
-      'target-arrow-color': '#5eead4',
-      'width': 4,
-      'opacity': 1
-    }}
+    {selector: 'node.selected-route', style: {
+      'underlay-color': '#5eead4', 'underlay-opacity': 0.15, 'underlay-padding': 8
+    }},
+    {selector: 'edge.selected-route', style: {'width': 3.5, 'opacity': 1}},
+    {selector: '.route-dimmed', style: {'opacity': 0.18}}
   ]
 }) : null;
 
@@ -114,23 +138,57 @@ function highlightRoute(route) {
   selectedRouteId = route.id;
   if (!cy) return;
 
-  cy.elements().removeClass('selected-route');
-  const path = route.node_path || [];
-  path.forEach(nodeId => {
-    const node = cy.getElementById(nodeId);
-    if (node.length) node.addClass('selected-route');
+  cy.elements().removeClass('selected-route').addClass('route-dimmed');
+  const path = currentGraph.routePaths[route.id] || {nodes: [], edges: []};
+  [...path.nodes, ...path.edges].forEach(id => {
+    cy.getElementById(id).removeClass('route-dimmed').addClass('selected-route');
   });
+}
 
-  for (let index = 0; index < path.length - 1; index++) {
-    const source = path[index];
-    const target = path[index + 1];
-    cy.edges().filter(edge => (
-      edge.data('source') === source && edge.data('target') === target
-    )).addClass('selected-route');
+function readableView() {
+  if (!cy || !cy.nodes().length) return;
+  cy.fit(cy.elements(), 65);
+  if (cy.zoom() < 0.65) {
+    cy.zoom(0.85);
+    cy.pan({x: 90, y: cy.height() / 2});
+  } else if (cy.zoom() > 1.1) {
+    cy.zoom(1.1);
+    cy.center();
   }
 }
 
+function showTargetDetails() {
+  if (!currentTopology) return;
+  detailSelection = {kind: 'target', id: null};
+  const data = currentTopology;
+  setDetails(data.target.name, [
+    ['Address', data.target.address],
+    ['Target status', String(data.target.status || 'unknown').toUpperCase()],
+    ['Target RTT', fmt(data.target.latency_ms) + ' ms'],
+    ['Target loss', fmt(data.target.loss_percent) + '%'],
+    ['Target jitter', fmt(data.target.jitter_ms) + ' ms'],
+    ['Active routes', String((data.summary || {}).active_routes || 0)]
+  ], 'Node RTT is measured from this probe, not between routers. Dotted segments show unobserved hops.');
+}
+
+document.getElementById('graph-fit').addEventListener('click', () => {
+  if (cy) cy.fit(cy.elements(), 65);
+});
+document.getElementById('graph-readable').addEventListener('click', readableView);
+document.getElementById('graph-all').addEventListener('click', () => {
+  selectedRouteId = null;
+  if (cy) cy.elements().removeClass('selected-route route-dimmed');
+  if (currentTopology) renderRoutes(currentTopology.routes || []);
+  showTargetDetails();
+});
+function zoomGraph(multiplier) {
+  if (cy) cy.zoom({level: cy.zoom() * multiplier, renderedPosition: {x: cy.width() / 2, y: cy.height() / 2}});
+}
+document.getElementById('graph-zoom-in').addEventListener('click', () => zoomGraph(1.25));
+document.getElementById('graph-zoom-out').addEventListener('click', () => zoomGraph(0.8));
+
 function showRouteDetails(route) {
+  detailSelection = {kind: 'route', id: route.id};
   setDetails(route.label, [
     ['Status', String(route.status || 'unknown').toUpperCase()],
     ['Current RTT', fmt(route.destination_rtt_ms) + ' ms'],
@@ -221,61 +279,26 @@ function renderRoutes(routes) {
 function renderTopology(data) {
   currentTopology = data;
   renderSummary(data.summary || {});
-  renderRoutes(data.routes || []);
+  const hadHops = cy && cy.nodes().length > 1;
+  currentGraph = MultipathGraph.build(data);
 
   if (cy) {
-    cy.elements().remove();
-
-    const elements = [];
-    (data.nodes || []).forEach(node => {
-      elements.push({
-        group: 'nodes',
-        data: {
-          id: node.id,
-          label: node.label,
-          active: node.active ? '1' : '0',
-          ttl: node.ttl,
-          address: node.address,
-          rtt_ms: node.rtt_ms,
-          average_rtt_ms: node.average_rtt_ms,
-          samples: node.samples,
-          last_seen: node.last_seen
-        }
-      });
+    cy.batch(() => {
+      cy.elements().remove();
+      cy.add(currentGraph.elements);
     });
-
-    (data.edges || []).forEach(edge => {
-      elements.push({
-        group: 'edges',
-        data: {
-          id: edge.id,
-          source: edge.source,
-          target: edge.target,
-          active: edge.active ? '1' : '0',
-          samples: edge.samples,
-          last_seen: edge.last_seen
-        }
-      });
-    });
-
-    cy.add(elements);
-    cy.layout({
-      name: 'breadthfirst',
-      directed: true,
-      padding: 45,
-      spacingFactor: 1.25,
-      roots: '#probe'
-    }).run();
+    if (graphTargetId !== data.target.id || (!hadHops && cy.nodes().length > 1)) readableView();
+    graphTargetId = data.target.id;
   }
 
-  setDetails(data.target.name, [
-    ['Address', data.target.address],
-    ['Target status', String(data.target.status || 'unknown').toUpperCase()],
-    ['Target RTT', fmt(data.target.latency_ms) + ' ms'],
-    ['Target loss', fmt(data.target.loss_percent) + '%'],
-    ['Target jitter', fmt(data.target.jitter_ms) + ' ms'],
-    ['Active routes', String((data.summary || {}).active_routes || 0)]
-  ], 'Target health is sampled frequently; topology discovery runs at a slower interval.');
+  renderRoutes(data.routes || []);
+  const selected = (data.routes || []).find(route => route.id === selectedRouteId);
+  const detailElement = cy && cy.getElementById(detailSelection.id || '');
+  if (detailSelection.kind === 'node' && detailElement && detailElement.length) showNodeDetails(detailElement.data());
+  else if (detailSelection.kind === 'edge' && detailElement && detailElement.length) showEdgeDetails(detailElement.data());
+  else if (selected) showRouteDetails(selected);
+  else showTargetDetails();
+  document.getElementById('graph-empty').hidden = (data.nodes || []).length > 1;
 }
 
 async function loadTopology(targetId) {
@@ -288,6 +311,7 @@ async function loadTopology(targetId) {
 
 select.addEventListener('change', async () => {
   selectedRouteId = null;
+  detailSelection = {kind: 'target', id: null};
   rawOutput.textContent = '—';
   if (!select.value) return;
   try {
@@ -336,12 +360,12 @@ window.addEventListener('multipath-live', event => {
     && String(event.detail.target.id) === select.value
   ) {
     currentTopology.target = Object.assign({}, currentTopology.target, event.detail.target);
+    if (detailSelection.kind === 'target') showTargetDetails();
   }
 });
 
-if (cy) {
-  cy.on('tap', 'node', event => {
-    const node = event.target.data();
+function showNodeDetails(node) {
+    detailSelection = {kind: 'node', id: node.id};
     setDetails(node.address || node.label, [
       ['TTL', String(node.ttl)],
       ['Current RTT', fmt(node.rtt_ms) + ' ms'],
@@ -350,18 +374,24 @@ if (cy) {
       ['State', node.active === '1' ? 'CURRENT' : 'RECENT / MISSING'],
       ['Last seen', localTime(node.last_seen)]
     ]);
-  });
+}
 
-  cy.on('tap', 'edge', event => {
-    const edge = event.target.data();
+function showEdgeDetails(edge) {
+    detailSelection = {kind: 'edge', id: edge.id};
     setDetails('Link', [
-      ['From', edge.source],
-      ['To', edge.target],
+      ['From', cy.getElementById(edge.source).data('address') || 'Local probe'],
+      ['To', cy.getElementById(edge.target).data('address') || edge.target],
+      ['Routes', (currentTopology.routes || []).filter(route => edge.route_ids.includes(route.id)).map(route => route.label).join(' / ') || '—'],
+      ['Observation', edge.kind === 'gap' ? edge.gap_hops + ' unobserved hops' : edge.kind === 'source' ? 'Probe origin' : 'Observed adjacency'],
       ['State', edge.active === '1' ? 'CURRENT' : 'RECENT / MISSING'],
-      ['Samples', String(edge.samples || 0)],
+      ['Samples', edge.samples === null ? '—' : String(edge.samples || 0)],
       ['Last seen', localTime(edge.last_seen)]
-    ]);
-  });
+    ], edge.kind === 'gap' ? 'This dotted segment bridges missing replies in the same observed flow. It is not a measured direct link or proof of an outage.' : 'Per-link latency and packet loss are not measured. RTT labels belong to the responding nodes.');
+}
+
+if (cy) {
+  cy.on('tap', 'node', event => showNodeDetails(event.target.data()));
+  cy.on('tap', 'edge', event => showEdgeDetails(event.target.data()));
 } else {
   setDetails('Cytoscape unavailable', [
     ['Status', 'The graph library could not be loaded.']
