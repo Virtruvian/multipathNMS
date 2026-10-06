@@ -55,7 +55,7 @@
      info!(
          "Waiting {:?} for last replies...",
          config.receiver_wait_time
-@@ -69,6 +93,12 @@
+@@ -69,9 +93,74 @@
      // let final_receiver_statistics = receiver.statistics().lock().unwrap().clone();
  
      let replies = receiver.stop();
@@ -68,10 +68,10 @@
      // logger.stop();
  
      Ok(replies)
-@@ -76,3 +106,61 @@
+ 
      // Ok((final_prober_statistics, final_receiver_statistics))
  }
- 
++
 +
 +#[cfg(test)]
 +mod nms_tests {
