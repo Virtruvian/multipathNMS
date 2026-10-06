@@ -35,16 +35,26 @@ Per route the UI keeps:
 
 ## Start
 
+Install alongside other applications under `/opt/multipathNMS`:
+
 ```bash
-docker compose up -d --build
+sudo git clone --branch develop/init-project https://github.com/Virtruvian/multipathNMS.git /opt/multipathNMS
+cd /opt/multipathNMS
+sudo docker compose up -d --build
 ```
+
+While PR #1 is open, use `develop/init-project`. After it is merged, new installations can use `main`.
+
+The web interface is published on host port **8090**, mapped to the application on container port 8080 (`8090:8080`). Monitoring data persists in `/opt/multipathNMS/data`.
 
 Open:
 
-- http://localhost:8080/nms
-- http://localhost:8080/topology
-- http://localhost:8080/settings
-- http://localhost:8080/docs
+- http://localhost:8090/nms
+- http://localhost:8090/topology
+- http://localhost:8090/settings
+- http://localhost:8090/docs
+
+From another computer, replace `localhost` with the Docker host's IP address.
 
 The container uses `NET_RAW` for ICMP probing and Voyage packet probing. Voyage is pinned to a known source commit in the Dockerfile so builds are reproducible.
 

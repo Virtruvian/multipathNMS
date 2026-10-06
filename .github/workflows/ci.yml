@@ -42,12 +42,12 @@ jobs:
 
       - name: Start container
         run: |
-          docker run -d             --name multipathnms-ci             --cap-add NET_RAW             -p 8080:8080             multipathnms:ci
+          docker run -d             --name multipathnms-ci             --cap-add NET_RAW             -p 8090:8080             multipathnms:ci
 
       - name: Smoke test
         run: |
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8080/healthz; then
+            if curl --fail --silent http://127.0.0.1:8090/healthz; then
               exit 0
             fi
             sleep 1
