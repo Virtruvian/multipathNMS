@@ -85,7 +85,7 @@ Topology route status model:
 - route discovery/recovery/missing events
 - route RTT baseline and min/avg/max values
 - Cytoscape live graph
-- recent missing paths remain visible
+- recent missing paths remain available through the history overlay with visible missing counts
 - parser unit tests
 - SQLite topology persistence regression tests
 - horizontal TTL-based graph with router symbols and route highlighting
@@ -96,6 +96,11 @@ Topology route status model:
 - diagnostic toggle retains access to loose replies; partial/missing paths stay visible
 - patched pinned Voyage single-target mode varies source ports instead of destination IPs
 - parser clips each flow and its nodes at the first destination reply
+- receiver correlates replies with sent probes and validates supported checksums
+- random nonzero Voyage instance ID per scan and configured TTL range enforcement
+- multiple interfaces in one flow/TTL remain ambiguous; never majority-derived links
+- straight primary path, branch lanes, shared target marker and optional router icons
+- default current-path view with explicit recent-history overlay; no stored history is deleted
 
 ## Next implementation step
 

@@ -72,7 +72,7 @@ def _rtt_ms(record: dict) -> float | None:
         return None
 
 
-def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
+def parse_voyage_flat(stdout: str, resolved_ip: str, *, max_ttl: int = 32) -> TopologyObservation:
     records = _extract_flat_records(stdout)
     if not records:
         raise ValueError("Voyage returned no replies")
@@ -95,7 +95,7 @@ def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid Voyage flat record: {record!r}") from exc
 
-        if not 1 <= ttl <= 255 or flow_key[1] != resolved_ip:
+        if not 1 <= ttl <= max_ttl or flow_key[1] != resolved_ip:
             continue
 
         rtt_ms = _rtt_ms(record)
@@ -124,9 +124,12 @@ def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
         selected: dict[int, HopObservation] = {}
         for ttl, values in replies_by_ttl.items():
             address_counts = Counter(address for address, _ in values)
-            address = resolved_ip if resolved_ip in address_counts else sorted(
-                address_counts, key=lambda item: (-address_counts[item], item)
-            )[0]
+            if len(address_counts) > 1:
+                # Multiple interfaces in one flow/TTL are ambiguous. Choosing
+                # a majority would invent a path through that interface.
+                selected[ttl] = HopObservation(ttl, None, None, sum(address_counts.values()))
+                continue
+            address = next(iter(address_counts))
             rtts = [
                 rtt_ms
                 for item_address, rtt_ms in values

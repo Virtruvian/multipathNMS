@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -13,6 +14,7 @@ class Settings(BaseSettings):
     voyage_timeout_seconds: int = 90
     voyage_probing_rate: int = 50
     voyage_confidence: float = 99.0
+    voyage_max_ttl: int = Field(default=32, ge=1, le=64)
     suspect_after_failures: int = 3
     down_after_failures: int = 5
     degraded_loss_percent: float = 10.0

@@ -99,6 +99,25 @@ class TopologyPersistenceTests(unittest.TestCase):
             self.assertTrue(all(r.active and r.status == "active" for r in routes))
             self.assertEqual(1, len(list(db.scalars(select(Event).where(Event.event_type == "route_recovered")))))
 
+    def test_legacy_out_of_range_paths_are_excluded_without_deleting_history(self) -> None:
+        self.persist()
+        with self.sessions() as db:
+            db.add(RoutePath(target_id=self.target_id, path_hash="legacy-invalid", route_index=3,
+                             hop_count=54, active=True, complete=True))
+            db.add(TopologyNode(target_id=self.target_id, ttl=54, address="52.174.3.88", active=True))
+            db.commit()
+            payload = topology_payload(db, self.target_id)
+            self.assertEqual(1, payload["summary"]["excluded_routes"])
+            self.assertEqual(2, payload["summary"]["active_routes"])
+            self.assertTrue(all(node["ttl"] <= 32 for node in payload["nodes"]))
+            self.assertEqual(3, len(list(db.scalars(select(RoutePath)))))
+            self.assertEqual("8.8.8.8", payload["resolved_ip"])
+        self.persist()
+        with self.sessions() as db:
+            invalid = db.scalar(select(RoutePath).where(RoutePath.path_hash == "legacy-invalid"))
+            self.assertFalse(invalid.active)
+            self.assertEqual(0, len(list(db.scalars(select(Event).where(Event.event_type == "route_missing")))))
+
 
 if __name__ == "__main__":
     unittest.main()

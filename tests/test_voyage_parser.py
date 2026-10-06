@@ -71,15 +71,37 @@ class VoyageParserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no usable replies"):
             parse_voyage_flat(json.dumps([neighbour]), "8.8.8.8")
 
-    def test_destination_reply_is_not_lost_to_majority_at_same_ttl(self) -> None:
+    def test_ambiguous_ttl_does_not_invent_a_route_by_majority(self) -> None:
         replies = [self.reply(24000, 1, "192.168.1.1", 100),
                    self.reply(24000, 2, "8.8.8.8", 800)]
         replies += [self.reply(24000, 2, "10.0.0.2", 500)] * 3
         replies.append(self.reply(24000, 3, "8.8.8.8", 900))
         topology = parse_voyage_flat(json.dumps(replies), "8.8.8.8")
-        self.assertTrue(topology.paths[0].complete)
+        self.assertFalse(topology.paths[0].complete)
         self.assertEqual(2, len(topology.paths[0].hops))
-        self.assertEqual("8.8.8.8", topology.paths[0].hops[-1].address)
+        self.assertIsNone(topology.paths[0].hops[-1].address)
+        self.assertEqual(0, len(topology.edges))
+
+    def test_hops_outside_the_sent_ttl_range_are_rejected(self) -> None:
+        replies = [self.reply(24000, 1, "192.168.1.1", 100),
+                   self.reply(24000, 3, "8.8.8.8", 500),
+                   self.reply(4711, 54, "8.8.8.8", 65540)]
+        topology = parse_voyage_flat(json.dumps(replies), "8.8.8.8", max_ttl=32)
+        self.assertEqual(1, len(topology.paths))
+        self.assertTrue(all(node.ttl <= 32 for node in topology.nodes))
+        self.assertEqual(3, len(topology.paths[0].hops))
+        with self.assertRaisesRegex(ValueError, "no usable replies"):
+            parse_voyage_flat(json.dumps(replies[-1:]), "8.8.8.8", max_ttl=32)
+
+    def test_ambiguous_intermediate_hop_preserves_gap_instead_of_false_links(self) -> None:
+        replies = [self.reply(24000, 1, "192.168.1.1", 100),
+                   self.reply(24000, 2, "10.0.0.1", 200),
+                   self.reply(24000, 2, "10.0.0.2", 250),
+                   self.reply(24000, 3, "8.8.8.8", 500)]
+        topology = parse_voyage_flat(json.dumps(replies), "8.8.8.8")
+        self.assertTrue(topology.paths[0].complete)
+        self.assertIsNone(topology.paths[0].hops[1].address)
+        self.assertEqual(0, len(topology.edges))
 
     @staticmethod
     def reply(src_port: int, ttl: int, address: str, rtt: int) -> dict:

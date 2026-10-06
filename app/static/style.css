@@ -137,7 +137,7 @@ button:disabled{opacity:.5}
 .graph-controls button{font-size:11px;padding:6px 9px;background:#102333;border-color:#294055}
 .graph-direction{margin-right:auto;color:#94bdce;font-size:10px;font-weight:800;letter-spacing:.1em}
 .graph-direction span{color:var(--accent);margin:0 8px}
-#cy{width:100%;height:clamp(680px,calc(100vh - 350px),1100px);background:radial-gradient(circle,#233749 1px,transparent 1px);background-size:24px 24px}
+#cy{width:100%;height:clamp(440px,calc(100vh - 390px),800px);background:#0b1621}
 .topology-panel.graph-expanded{position:fixed;inset:12px;z-index:20;display:flex;flex-direction:column;min-height:0;background:#0b1621;box-shadow:0 0 0 20px #071019e6}
 .topology-panel.graph-expanded #cy{height:auto;min-height:0;flex:1}
 body.graph-expanded-active{overflow:hidden}

@@ -89,7 +89,7 @@ class TopologyService:
                 )
 
             try:
-                observation = parse_voyage_flat(result.stdout, result.resolved_ip)
+                observation = parse_voyage_flat(result.stdout, result.resolved_ip, max_ttl=result.max_ttl)
             except ValueError as exc:
                 raise RuntimeError(f"Unable to parse Voyage output: {exc}") from exc
 
@@ -375,6 +375,12 @@ class TopologyService:
                     )
 
             for path_hash, route in existing_paths.items():
+                if route.hop_count > settings.voyage_max_ttl:
+                    # Retain out-of-range legacy data without treating it as
+                    # a newly disappeared measured path or emitting an alarm.
+                    route.active = False
+                    route.status = "missing"
+                    continue
                 if path_hash in seen_hashes:
                     continue
                 was_active = route.active
@@ -412,6 +418,7 @@ def topology_payload(db, target_id: int) -> dict:
             select(TopologyNode)
             .where(
                 TopologyNode.target_id == target_id,
+                TopologyNode.ttl <= settings.voyage_max_ttl,
                 (TopologyNode.active.is_(True))
                 | (TopologyNode.last_seen >= cutoff),
             )
@@ -446,6 +453,8 @@ def topology_payload(db, target_id: int) -> dict:
             .order_by(RoutePath.route_index)
         )
     )
+    excluded_routes = sum(route.hop_count > settings.voyage_max_ttl for route in routes)
+    routes = [route for route in routes if route.hop_count <= settings.voyage_max_ttl]
     route_ids = [route.id for route in routes]
     hops_by_route: dict[int, list[RouteHop]] = defaultdict(list)
     if route_ids:
@@ -590,6 +599,8 @@ def topology_payload(db, target_id: int) -> dict:
             "loss_percent": target.loss_percent,
             "jitter_ms": target.jitter_ms,
         },
+        "resolved_ip": latest_snapshot.resolved_ip if latest_snapshot else None,
+        "max_ttl": settings.voyage_max_ttl,
         "summary": {
             "active_routes": sum(route.active for route in routes),
             "degraded_routes": sum(
@@ -598,6 +609,7 @@ def topology_payload(db, target_id: int) -> dict:
             "missing_routes": sum(
                 route.status == "missing" for route in routes
             ),
+            "excluded_routes": excluded_routes,
             "nodes": len(nodes),
             "edges": len(edges),
             "probe_replies": (

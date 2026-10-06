@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import socket
+import secrets
 from dataclasses import dataclass
 
 from ..config import settings
@@ -13,6 +14,7 @@ class VoyageResult:
     return_code: int
     stdout: str
     stderr: str
+    max_ttl: int = 32
 
 
 async def resolve_target(target: str) -> str:
@@ -35,19 +37,21 @@ async def run_voyage(
     target: str,
     *,
     protocol: str = "icmp",
-    max_ttl: int = 32,
+    max_ttl: int | None = None,
 ) -> VoyageResult:
     if protocol not in {"icmp", "udp"}:
         raise ValueError("protocol must be icmp or udp")
 
     resolved_ip = await resolve_target(target)
-    max_ttl = max(1, min(max_ttl, 64))
+    max_ttl = max(1, min(max_ttl if max_ttl is not None else settings.voyage_max_ttl, 64))
 
     process = await asyncio.create_subprocess_exec(
         "voyage",
         "--dst-addr",
         resolved_ip,
         "--single-target",
+        "--id",
+        str(secrets.randbelow(65535) + 1),
         "--protocol",
         protocol,
         "--max-ttl",
@@ -80,4 +84,5 @@ async def run_voyage(
         return_code=process.returncode,
         stdout=stdout.decode(errors="replace"),
         stderr=stderr.decode(errors="replace"),
+        max_ttl=max_ttl,
     )

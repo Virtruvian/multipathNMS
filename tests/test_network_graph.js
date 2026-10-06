@@ -101,3 +101,62 @@ test('empty topology renders the source without inventing paths', () => {
   assert.deepEqual(graph.elements[0].position, {x: 0, y: 0});
   assert.equal(graph.elements[0].data.role, 'source');
 });
+
+test('primary path stays on one line, alternatives branch and merge', () => {
+  const data = fixture();
+  const graph = build(data);
+  assert.equal(graph.primaryRouteId, 1);
+  const y = id => graph.elements.find(item => item.data.id === id).position.y;
+  ['probe', 'n1', 'n2a', 'n3'].forEach(id => assert.equal(y(id), 0));
+  assert.notEqual(y('n2b'), 0);
+  assert.equal(graph.elements.find(item => item.data.id === 'e3').data.label, '');
+});
+
+test('different hop counts terminate at one visual target without inventing a link', () => {
+  const data = fixture();
+  data.nodes.push({id:'n4',ttl:4,address:'8.8.8.8',active:true});
+  data.routes[1].hops = [{ttl:1,node_id:'n1'},{ttl:2,node_id:'n2b'},
+    {ttl:3,node_id:null},{ttl:4,node_id:'n4'}];
+  data.edges = data.edges.filter(edge => edge.source !== 'n2b');
+  const graph = build(data);
+  const targets = graph.elements.filter(item => item.group === 'nodes' && item.data.role === 'destination');
+  assert.equal(targets.length, 1);
+  assert.deepEqual(targets[0].data.observed_ttls, [3, 4]);
+  assert.equal(graph.routePaths[1].nodes.at(-1), graph.routePaths[2].nodes.at(-1));
+  const branchEdge = graph.elements.find(item => item.data.source === 'n2b');
+  assert.equal(branchEdge.data.kind, 'gap');
+  assert.equal(branchEdge.data.gap_hops, 1);
+  assert.equal(branchEdge.data.samples, null);
+});
+
+test('recent history is retained but can be separated from current paths', () => {
+  const data = fixture();
+  data.routes[1].active = false;
+  data.routes[1].status = 'missing';
+  const current = build(data, {showHistory:false});
+  assert.equal(current.hiddenMissingCount, 1);
+  assert.deepEqual(current.visibleRoutes.map(route => route.id), [1]);
+  assert.equal(current.elements.some(item => item.data.id === 'n2b'), false);
+  assert.equal(build(data, {showHistory:true}).elements.some(item => item.data.id === 'n2b'), true);
+});
+
+test('a previous DNS destination keeps its own endpoint rather than merging with another IP', () => {
+  const data = fixture();
+  data.nodes.push({id:'old-target',ttl:3,address:'1.1.1.1',active:false});
+  data.routes[1].active = false;
+  data.routes[1].hops.at(-1).node_id = 'old-target';
+  const graph = build(data, {showHistory:true});
+  const targets = graph.elements.filter(item => item.group === 'nodes' && item.data.role === 'destination');
+  assert.equal(targets.length, 2);
+  assert.notEqual(graph.routePaths[1].nodes.at(-1), graph.routePaths[2].nodes.at(-1));
+});
+
+test('unprobed TTLs never appear even in the diagnostic view', () => {
+  const data = fixture();
+  data.max_ttl = 32;
+  data.nodes.push({id:'bogus',ttl:54,address:'52.174.3.88',active:true});
+  data.routes.push({id:3,active:true,complete:false,hops:[{ttl:54,node_id:'bogus'}]});
+  const graph = build(data, {showLooseReplies:true,showHistory:true});
+  assert.equal(graph.excludedRouteCount, 1);
+  assert.equal(graph.elements.some(item => item.data.id === 'bogus'), false);
+});

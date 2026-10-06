@@ -18,6 +18,10 @@ class VoyageAdapterTests(unittest.IsolatedAsyncioTestCase):
                     result = await run_voyage("example.test", protocol=protocol)
                 arguments = spawn.call_args.args
                 self.assertIn("--single-target", arguments)
+                self.assertIn("--id", arguments)
+                self.assertGreaterEqual(int(arguments[arguments.index("--id") + 1]), 1)
+                self.assertLessEqual(int(arguments[arguments.index("--id") + 1]), 65535)
+                self.assertEqual(32, result.max_ttl)
                 self.assertEqual("8.8.8.8", arguments[arguments.index("--dst-addr") + 1])
                 self.assertEqual(protocol, arguments[arguments.index("--protocol") + 1])
                 self.assertEqual(0, result.return_code)

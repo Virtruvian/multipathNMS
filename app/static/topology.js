@@ -10,6 +10,8 @@ let currentGraph = {elements: [], routePaths: {}};
 let graphTargetId = null;
 let detailSelection = {kind: 'target', id: null};
 let showLooseReplies = false;
+let showHistory = false;
+let showRouterSymbols = false;
 
 const cy = typeof cytoscape === 'function' ? cytoscape({
   container: document.getElementById('cy'),
@@ -20,7 +22,6 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
   layout: {name: 'preset'},
   style: [
     {selector: 'node', style: {
-      'background-image': '/static/router.svg',
       'background-fit': 'contain',
       'background-opacity': 0,
       'border-width': 0,
@@ -50,10 +51,12 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
     }},
     {selector: 'edge', style: {
       'width': 2,
-      'line-color': '#3d9fb1',
-      'target-arrow-color': '#3d9fb1',
+      'line-color': '#50c889',
+      'target-arrow-color': '#50c889',
       'target-arrow-shape': 'triangle',
-      'curve-style': 'bezier',
+      'curve-style': 'unbundled-bezier',
+      'control-point-distances': 'data(curve_distance)',
+      'control-point-weights': 0.5,
       'label': 'data(label)',
       'font-size': 12,
       'color': '#bad5e8',
@@ -69,6 +72,9 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'line-style': 'dotted', 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8',
       'color': '#94a3b8'
     }},
+    {selector: 'edge[kind = "diagnostic"]', style: {
+      'line-style': 'dotted', 'line-color': '#64748b', 'target-arrow-color': '#64748b'
+    }},
     {selector: 'edge[status = "degraded"]', style: {
       'line-color': '#fbbf24', 'target-arrow-color': '#fbbf24', 'color': '#fbbf24'
     }},
@@ -83,7 +89,17 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
       'underlay-color': '#5eead4', 'underlay-opacity': 0.15, 'underlay-padding': 8
     }},
     {selector: 'edge.selected-route', style: {'width': 3.5, 'opacity': 1}},
-    {selector: '.route-dimmed', style: {'opacity': 0.18}}
+    {selector: '.route-dimmed', style: {'opacity': 0.18}},
+    {selector: 'node.router-node', style: {'background-image': '/static/router.svg'}},
+    {selector: 'node.path-node', style: {
+      'background-image': 'none', 'background-color': '#0b1621', 'background-opacity': 1,
+      'border-width': 3, 'border-color': node => node.data('active') === '0' ? '#f87171' : '#50c889',
+      'border-style': 'solid', 'width': 30, 'height': 30, 'shape': 'ellipse',
+      'text-max-width': 150, 'font-size': 13
+    }},
+    {selector: 'node.path-node[role = "source"], node.path-node[role = "destination"]', style: {
+      'shape': 'round-rectangle', 'width': 34, 'height': 30
+    }}
   ]
 }) : null;
 
@@ -181,6 +197,17 @@ document.getElementById('graph-loose').addEventListener('click', () => {
   if (currentTopology) renderTopology(currentTopology);
   readableView();
 });
+document.getElementById('graph-history').addEventListener('click', () => {
+  showHistory = !showHistory;
+  if (currentTopology) renderTopology(currentTopology);
+  readableView();
+});
+document.getElementById('graph-mode').addEventListener('click', () => {
+  showRouterSymbols = !showRouterSymbols;
+  if (cy) cy.nodes().toggleClass('path-node', !showRouterSymbols).toggleClass('router-node', showRouterSymbols);
+  document.getElementById('graph-mode').textContent = showRouterSymbols ? 'Path symbols' : 'Router symbols';
+  document.getElementById('graph-mode').setAttribute('aria-pressed', String(showRouterSymbols));
+});
 const graphPanel = document.querySelector('.topology-panel');
 const expandButton = document.getElementById('graph-expand');
 let expandedViewport = null;
@@ -209,7 +236,7 @@ document.addEventListener('keydown', event => {
 document.getElementById('graph-all').addEventListener('click', () => {
   selectedRouteId = null;
   if (cy) cy.elements().removeClass('selected-route route-dimmed');
-  if (currentTopology) renderRoutes(currentTopology.routes || []);
+  if (currentTopology) renderRoutes(currentGraph.visibleRoutes || []);
   showTargetDetails();
 });
 function zoomGraph(multiplier) {
@@ -278,7 +305,7 @@ function renderRoutes(routes) {
     values.className = 'route-card-values';
     values.textContent = 'RTT ' + fmt(route.destination_rtt_ms)
       + ' ms · avg ' + fmt(route.average_rtt_ms)
-      + ' ms · ' + (route.hop_count || 0) + ' hops';
+      + ' ms · ' + (route.hop_count || 0) + ' hops · ' + (route.complete ? 'target reached' : 'partial path');
 
     const meta = document.createElement('small');
     meta.textContent = 'availability ' + fmt(route.availability_percent, 2)
@@ -311,31 +338,42 @@ function renderTopology(data) {
   currentTopology = data;
   renderSummary(data.summary || {});
   const hadHops = cy && cy.nodes().length > 1;
-  currentGraph = MultipathGraph.build(data, {showLooseReplies});
+  currentGraph = MultipathGraph.build(data, {showLooseReplies, showHistory});
   const looseButton = document.getElementById('graph-loose');
   looseButton.textContent = showLooseReplies ? 'Hide loose replies' : 'Show loose replies';
   looseButton.setAttribute('aria-pressed', String(showLooseReplies));
-  document.getElementById('graph-filter-info').textContent = showLooseReplies
-    ? 'Diagnostic view: ' + currentGraph.looseReplyCount + ' replies outside reconstructed paths.'
-    : 'Paths only · ' + currentGraph.looseReplyCount + ' loose replies hidden · Partial and recent missing paths retained.';
+  const historyButton = document.getElementById('graph-history');
+  historyButton.textContent = showHistory ? 'Hide recent history' : 'Show recent history';
+  historyButton.setAttribute('aria-pressed', String(showHistory));
+  document.getElementById('graph-filter-info').textContent =
+    (showHistory ? 'Current + recent paths' : 'Current paths')
+    + ' · ' + (showHistory ? (data.summary || {}).missing_routes || 0 : currentGraph.hiddenMissingCount)
+    + (showHistory ? ' recent missing paths shown' : ' recent missing paths retained in history')
+    + ' · ' + currentGraph.looseReplyCount + (showLooseReplies ? ' replies outside visible paths' : ' loose replies hidden')
+    + (currentGraph.excludedRouteCount ? ' · ' + currentGraph.excludedRouteCount + ' paths outside probe range excluded' : '');
 
   if (cy) {
     cy.batch(() => {
       cy.elements().remove();
       cy.add(currentGraph.elements);
+      cy.nodes().toggleClass('path-node', !showRouterSymbols).toggleClass('router-node', showRouterSymbols);
     });
     if (graphTargetId !== data.target.id || (!hadHops && cy.nodes().length > 1)) readableView();
     graphTargetId = data.target.id;
   }
 
-  renderRoutes(data.routes || []);
+  renderRoutes(currentGraph.visibleRoutes || []);
   const selected = (data.routes || []).find(route => route.id === selectedRouteId);
   const detailElement = cy && cy.getElementById(detailSelection.id || '');
   if (detailSelection.kind === 'node' && detailElement && detailElement.length) showNodeDetails(detailElement.data());
   else if (detailSelection.kind === 'edge' && detailElement && detailElement.length) showEdgeDetails(detailElement.data());
   else if (selected) showRouteDetails(selected);
   else showTargetDetails();
-  document.getElementById('graph-empty').hidden = currentGraph.elements.some(item => item.group === 'nodes' && item.data.id !== 'probe');
+  const empty = document.getElementById('graph-empty');
+  empty.hidden = currentGraph.elements.some(item => item.group === 'nodes' && item.data.id !== 'probe');
+  empty.textContent = currentGraph.hiddenMissingCount
+    ? 'No current paths. Use Show recent history to inspect the missing paths.'
+    : 'Waiting for topology discovery. Use Discover now to find the first paths.';
 }
 
 async function loadTopology(targetId) {
@@ -405,6 +443,7 @@ function showNodeDetails(node) {
     detailSelection = {kind: 'node', id: node.id};
     setDetails(node.address || node.label, [
       ['TTL', String(node.ttl)],
+      ['Observed TTLs', (node.observed_ttls || [node.ttl]).join(' / ')],
       ['Current RTT', fmt(node.rtt_ms) + ' ms'],
       ['Average RTT', fmt(node.average_rtt_ms) + ' ms'],
       ['Samples', String(node.samples || 0)],

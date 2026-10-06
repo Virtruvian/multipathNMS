@@ -7,8 +7,8 @@
 {% block content %}
 <section class="hero-row">
   <div>
-    <h1>Live Topology</h1>
-    <p>Follow the paths from source to target. Select a route to highlight its hops.</p>
+    <h1>Network Path Analysis</h1>
+    <p>Follow measured flows from source to target. Branches show observed alternative paths.</p>
   </div>
   <div class="toolbar">
     <select id="target-select">
@@ -41,6 +41,8 @@
       <div class="graph-direction">SOURCE <span>→</span> TARGET</div>
       <button id="graph-expand" type="button" aria-expanded="false">Expand</button>
       <button id="graph-all" type="button">All routes</button>
+      <button id="graph-history" type="button" aria-pressed="false">Show recent history</button>
+      <button id="graph-mode" type="button" aria-pressed="false">Router symbols</button>
       <button id="graph-loose" type="button" aria-pressed="false">Show loose replies</button>
       <button id="graph-fit" type="button">Fit all</button>
       <button id="graph-readable" type="button">Readable view</button>
@@ -49,7 +51,7 @@
     </div>
     <div id="cy"></div>
     <div id="graph-empty" class="graph-empty">Waiting for topology discovery…<small>Use Discover now to find the first paths.</small></div>
-    <div class="graph-caption"><span id="graph-filter-info">Only replies belonging to reconstructed paths are shown.</span> · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
+    <div class="graph-caption"><span id="graph-filter-info">Current measured paths</span><br>Connections show observed flow adjacency, not verified physical links · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
   </div>
 
   <aside class="topology-sidebar">
