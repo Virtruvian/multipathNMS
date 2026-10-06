@@ -10,6 +10,7 @@ let selectedRouteId = null;
 const cy = typeof cytoscape === 'function' ? cytoscape({
   container: document.getElementById('cy'),
   elements: [],
+  maxZoom: 1.5,
   layout: {name: 'breadthfirst', directed: true, padding: 45, spacingFactor: 1.25},
   style: [
     {selector: 'node', style: {

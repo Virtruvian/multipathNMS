@@ -223,6 +223,7 @@ class TopologyService:
                         target_id=target_id,
                         source_node_id=source.id,
                         destination_node_id=destination.id,
+                        sample_count=0,
                         first_seen=now,
                         last_seen=now,
                     )
