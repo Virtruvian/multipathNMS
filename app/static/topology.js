@@ -9,6 +9,7 @@ let selectedRouteId = null;
 let currentGraph = {elements: [], routePaths: {}};
 let graphTargetId = null;
 let detailSelection = {kind: 'target', id: null};
+let showLooseReplies = false;
 
 const cy = typeof cytoscape === 'function' ? cytoscape({
   container: document.getElementById('cy'),
@@ -175,6 +176,11 @@ document.getElementById('graph-fit').addEventListener('click', () => {
   if (cy) cy.fit(cy.elements(), 65);
 });
 document.getElementById('graph-readable').addEventListener('click', readableView);
+document.getElementById('graph-loose').addEventListener('click', () => {
+  showLooseReplies = !showLooseReplies;
+  if (currentTopology) renderTopology(currentTopology);
+  readableView();
+});
 const graphPanel = document.querySelector('.topology-panel');
 const expandButton = document.getElementById('graph-expand');
 let expandedViewport = null;
@@ -305,7 +311,13 @@ function renderTopology(data) {
   currentTopology = data;
   renderSummary(data.summary || {});
   const hadHops = cy && cy.nodes().length > 1;
-  currentGraph = MultipathGraph.build(data);
+  currentGraph = MultipathGraph.build(data, {showLooseReplies});
+  const looseButton = document.getElementById('graph-loose');
+  looseButton.textContent = showLooseReplies ? 'Hide loose replies' : 'Show loose replies';
+  looseButton.setAttribute('aria-pressed', String(showLooseReplies));
+  document.getElementById('graph-filter-info').textContent = showLooseReplies
+    ? 'Diagnostic view: ' + currentGraph.looseReplyCount + ' replies outside reconstructed paths.'
+    : 'Paths only · ' + currentGraph.looseReplyCount + ' loose replies hidden · Partial and recent missing paths retained.';
 
   if (cy) {
     cy.batch(() => {
@@ -323,7 +335,7 @@ function renderTopology(data) {
   else if (detailSelection.kind === 'edge' && detailElement && detailElement.length) showEdgeDetails(detailElement.data());
   else if (selected) showRouteDetails(selected);
   else showTargetDetails();
-  document.getElementById('graph-empty').hidden = (data.nodes || []).length > 1;
+  document.getElementById('graph-empty').hidden = currentGraph.elements.some(item => item.group === 'nodes' && item.data.id !== 'probe');
 }
 
 async function loadTopology(targetId) {

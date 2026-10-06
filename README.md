@@ -14,6 +14,9 @@ router shows its IP, TTL and measured RTT from the probe. Links show route membe
 dotted segments explicitly indicate unobserved hops, rather than a measured direct link.
 Select a route to highlight it, drag to pan, and use **Fit all** or **Readable view**
 to navigate large topologies. Live updates retain the viewport and route selection.
+The default graph shows only nodes and links belonging to reconstructed paths.
+Use **Show loose replies** to inspect replies that cannot be placed on a path.
+Partial paths and recent missing routes remain visible in the default view.
 
 ## Stack
 
@@ -27,6 +30,14 @@ Two measurement loops intentionally run at different speeds:
 - **Topology loop** (default every 60 seconds): Voyage/Paris MDA discovers ECMP/multipath topology.
 
 A route that was previously discovered but is absent from the newest MDA result is shown as **missing** and kept visible for a configurable recent-history window. Missing does not automatically prove that an intermediate router failed; it means that path is no longer being observed in the current topology.
+
+Topology probes use ICMP by default. The Docker build patches the pinned Voyage
+revision with an explicit single-target mode: multipath flows vary source ports
+while retaining the resolved target IP. This prevents neighbouring destinations
+from being mixed into the trace. Each flow ends at its first target reply, including
+the nodes saved for that flow. See `patches/README.md` for the integration details.
+The adapter also accepts UDP; TCP tracing is not implemented. Silent hops can reflect
+filtering or rate limiting and do not by themselves establish an outage.
 
 Per route the UI keeps:
 
@@ -64,6 +75,17 @@ Open:
 From another computer, replace `localhost` with the Docker host's IP address.
 
 The container uses `NET_RAW` for ICMP probing and Voyage packet probing. Voyage is pinned to a known source commit in the Dockerfile so builds are reproducible.
+
+Update an existing installation, including the patched probe executable:
+
+```bash
+cd /opt/multipathNMS
+sudo git pull --ff-only origin develop/init-project
+sudo docker compose up -d --build
+```
+
+Run **Discover now** after updating. Previously saved paths are retained as recent
+history for `TOPOLOGY_STALE_MINUTES` (default 15 minutes), rather than deleting data.
 
 ## Configuration
 

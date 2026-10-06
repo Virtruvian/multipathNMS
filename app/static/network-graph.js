@@ -2,7 +2,7 @@
   'use strict';
 
   // Pure graph preparation: keep measured TTLs and links, and mark gaps explicitly.
-  function build(data) {
+  function build(data, {showLooseReplies = false} = {}) {
     const routes = data.routes || [];
     const destinationIds = new Set(routes.filter(route => route.complete).map(route => {
       const hops = route.hops || [];
@@ -57,6 +57,19 @@
       routePaths[route.id] = {nodes: ids, edges: edgeIds};
     });
 
+    // Retain partial and recently missing paths, but hide replies/links that
+    // cannot be placed on a reconstructed flow. Never invent their adjacency.
+    const looseReplyCount = Array.from(nodes.values())
+      .filter(node => node.id !== 'probe' && !node.route_ids.length).length;
+    if (!showLooseReplies) {
+      nodes.forEach((node, id) => {
+        if (id !== 'probe' && !node.route_ids.length) nodes.delete(id);
+      });
+      edges.forEach((edge, id) => {
+        if (!edge.route_ids.length || !nodes.has(edge.source) || !nodes.has(edge.target)) edges.delete(id);
+      });
+    }
+
     const routeOrder = new Map(routes.map((route, index) => [route.id, index]));
     const routeById = new Map(routes.map(route => [route.id, route]));
     const rank = node => node.route_ids.length
@@ -97,7 +110,7 @@
         : edge.route_ids.length && edge.route_ids.every(id => routeById.get(id).status === 'degraded') ? 'degraded' : 'active';
       elements.push({group: 'edges', data: edge});
     });
-    return {elements, routePaths};
+    return {elements, routePaths, looseReplyCount};
   }
 
   const api = {build};

@@ -1,0 +1,92 @@
+--- a/src/algorithms/diamond_miner.rs
++++ b/src/algorithms/diamond_miner.rs
+@@ -78,6 +78,13 @@
+         }
+     }
+ 
++    /// Discover flows to one host by varying source ports, never the target IP.
++    pub fn single_target(mut self) -> Self {
++        self.mapper_v4 = SequentialFlowMapper::new(1);
++        self.mapper_v6 = SequentialFlowMapper::new(1);
++        self
++    }
++
+     // pub fn links_by_ttl(&self) -> HashMap<TTL, Vec<Link>> {
+     //     get_links_by_ttl(&self.time_exceeded_replies())
+     // }
+--- a/src/algorithms/diamond_miner/tests.rs
++++ b/src/algorithms/diamond_miner/tests.rs
+@@ -320,3 +320,37 @@
+         HashMap::from([(2, 11 - 6), (3, 18 - 6), (4, 18 - 6)])
+     );
+ }
++
++#[test]
++fn single_target_probes_keep_destination_and_distinct_flows_across_rounds() {
++    for protocol in [L4::ICMP, L4::UDP] {
++        for target in ["192.170.0.2", "255.255.255.255", "2001:db8::ffff"] {
++            let destination: IpAddr = target.parse().unwrap();
++            let mut miner = DiamondMiner::new(
++                destination, 1, 4, 24000, 33434, protocol, 95.0, 10,
++            ).single_target();
++            let first = miner.next_round(vec![], false);
++            assert!(!first.is_empty());
++            assert!(first.iter().all(|p| p.dst_addr == destination));
++            for ttl in 1..=4 {
++                let ports: HashSet<_> = first.iter().filter(|p| p.ttl == ttl)
++                    .map(|p| p.src_port).collect();
++                assert_eq!(ports.len(), first.iter().filter(|p| p.ttl == ttl).count());
++                assert!(ports.len() > 1);
++            }
++            // Two observed interfaces force additional flow IDs in round two.
++            let replies = vec![(1, IP[1]), (1, IP[2]), (2, IP[3])].into_iter().map(|(ttl, address)| {
++                let mut observation = reply(ttl, address, DEST[0]);
++                observation.probe_dst_addr = destination;
++                observation
++            }).collect();
++            let second = miner.next_round(replies, false);
++            assert!(!second.is_empty());
++            assert!(second.iter().all(|p| p.dst_addr == destination));
++            for probe in &second {
++                assert!(!first.iter().any(|old| old.ttl == probe.ttl
++                    && old.src_port == probe.src_port));
++            }
++        }
++    }
++}
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -101,6 +101,10 @@
+     #[arg(short, long, value_enum, default_value_t = OutputFormat::Traceroute)]
+     output_format: OutputFormat,
+ 
++    /// Keep the destination fixed; vary source ports for multipath discovery.
++    #[arg(long, default_value_t = false)]
++    single_target: bool,
++
+     /// Receiver wait time in seconds
+     #[arg(long, default_value_t = 1)]
+     receiver_wait_time: u64,
+@@ -145,6 +149,10 @@
+     let mut alg = DiamondMiner::new(
+         dst_addr, min_ttl, max_ttl, src_port, dst_port, protocol, confidence, max_round,
+     );
++
++    if args.single_target {
++        alg = alg.single_target();
++    }
+ 
+     let mut round = 0;
+ 
+@@ -280,7 +288,10 @@
+         agent_id: "0".to_string(),
+         start_time,
+         end_time,
+-        protocol: Protocol::ICMP,
++        protocol: match args.protocol {
++            ProtocolArg::ICMP => Protocol::ICMP,
++            ProtocolArg::UDP => Protocol::UDP,
++        },
+         src_addr: IpAddr::from(Ipv4Addr::new(192, 168, 1, 1)),
+         src_addr_public: None,
+         dst_addr,

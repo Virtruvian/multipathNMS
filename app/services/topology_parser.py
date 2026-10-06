@@ -95,42 +95,38 @@ def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"Invalid Voyage flat record: {record!r}") from exc
 
-        if not 1 <= ttl <= 255:
+        if not 1 <= ttl <= 255 or flow_key[1] != resolved_ip:
             continue
 
         rtt_ms = _rtt_ms(record)
         flows[flow_key].append((ttl, address, rtt_ms))
-        node_counts[(ttl, address)] += 1
-        if rtt_ms is not None:
-            node_rtts[(ttl, address)].append(rtt_ms)
 
     if not flows:
         raise ValueError("Voyage returned no usable replies")
-
-    nodes = tuple(
-        NodeObservation(
-            ttl=ttl,
-            address=address,
-            rtt_ms=round(median(node_rtts[(ttl, address)]), 3)
-            if node_rtts[(ttl, address)]
-            else None,
-            samples=node_counts[(ttl, address)],
-        )
-        for ttl, address in sorted(node_counts)
-    )
 
     edges: set[EdgeObservation] = set()
     grouped_paths: dict[tuple[str | None, ...], list[tuple[HopObservation, ...]]] = defaultdict(list)
 
     for replies in flows.values():
+        destination_ttls = [ttl for ttl, address, _ in replies if address == resolved_ip]
+        end_ttl = min(destination_ttls) if destination_ttls else max(ttl for ttl, _, _ in replies)
         replies_by_ttl: dict[int, list[tuple[str, float | None]]] = defaultdict(list)
         for ttl, address, rtt_ms in replies:
+            # A flow ends at its first destination response, including node
+            # samples. Higher-TTL replies are not routers beyond the target.
+            if ttl > end_ttl:
+                continue
             replies_by_ttl[ttl].append((address, rtt_ms))
+            node_counts[(ttl, address)] += 1
+            if rtt_ms is not None:
+                node_rtts[(ttl, address)].append(rtt_ms)
 
         selected: dict[int, HopObservation] = {}
         for ttl, values in replies_by_ttl.items():
             address_counts = Counter(address for address, _ in values)
-            address = sorted(address_counts, key=lambda item: (-address_counts[item], item))[0]
+            address = resolved_ip if resolved_ip in address_counts else sorted(
+                address_counts, key=lambda item: (-address_counts[item], item)
+            )[0]
             rtts = [
                 rtt_ms
                 for item_address, rtt_ms in values
@@ -143,13 +139,9 @@ def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
                 samples=address_counts[address],
             )
 
-        destination_ttls = [
-            ttl for ttl, hop in selected.items() if hop.address == resolved_ip
-        ]
-        max_ttl = min(destination_ttls) if destination_ttls else max(selected)
         hops = tuple(
             selected.get(ttl, HopObservation(ttl=ttl, address=None, rtt_ms=None, samples=0))
-            for ttl in range(1, max_ttl + 1)
+            for ttl in range(1, end_ttl + 1)
         )
         signature = tuple(hop.address for hop in hops)
         grouped_paths[signature].append(hops)
@@ -210,7 +202,16 @@ def parse_voyage_flat(stdout: str, resolved_ip: str) -> TopologyObservation:
         )
 
     return TopologyObservation(
-        nodes=nodes,
+        nodes=tuple(
+            NodeObservation(
+                ttl=ttl,
+                address=address,
+                rtt_ms=round(median(node_rtts[(ttl, address)]), 3)
+                if node_rtts[(ttl, address)] else None,
+                samples=node_counts[(ttl, address)],
+            )
+            for ttl, address in sorted(node_counts)
+        ),
         edges=tuple(
             sorted(
                 edges,

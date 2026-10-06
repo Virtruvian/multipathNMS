@@ -92,6 +92,10 @@ Topology route status model:
 - graph gaps explicitly distinguish unobserved segments from measured links
 - graph viewport and selected route survive live updates
 - dependency-free Node.js graph tests
+- default graph filters replies/links without reconstructed path membership
+- diagnostic toggle retains access to loose replies; partial/missing paths stay visible
+- patched pinned Voyage single-target mode varies source ports instead of destination IPs
+- parser clips each flow and its nodes at the first destination reply
 
 ## Next implementation step
 

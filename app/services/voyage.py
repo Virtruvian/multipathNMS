@@ -47,6 +47,7 @@ async def run_voyage(
         "voyage",
         "--dst-addr",
         resolved_ip,
+        "--single-target",
         "--protocol",
         protocol,
         "--max-ttl",

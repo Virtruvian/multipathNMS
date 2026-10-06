@@ -6,10 +6,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git libpcap-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+COPY patches/voyage-single-target.patch /tmp/voyage-single-target.patch
+
 RUN git init /src/voyage \
     && git -C /src/voyage remote add origin https://github.com/dioptra-io/voyage.git \
     && git -C /src/voyage fetch --depth 1 origin "$VOYAGE_REF" \
     && git -C /src/voyage checkout --detach FETCH_HEAD \
+    && git -C /src/voyage apply --check /tmp/voyage-single-target.patch \
+    && git -C /src/voyage apply /tmp/voyage-single-target.patch \
+    && cargo test --locked --lib single_target --manifest-path /src/voyage/Cargo.toml \
     && cargo build --release --locked --manifest-path /src/voyage/Cargo.toml
 
 FROM python:3.12-slim-bookworm

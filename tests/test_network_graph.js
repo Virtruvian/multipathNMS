@@ -34,14 +34,35 @@ test('parallel hops share a column, branch vertically and converge on the target
   assert.equal(JSON.stringify(data), before, 'do not mutate live backend data');
 });
 
-test('disconnected replies stay in their measured TTL column instead of a root row', () => {
+test('loose replies and links are hidden by default and available for diagnosis', () => {
   const data = fixture();
   data.nodes.push({id: 'orphan', ttl: 4, address: '203.0.113.4', active: true});
+  data.edges.push({id: 'loose-edge', source: 'n3', target: 'orphan', active: true});
   const graph = build(data);
-  const orphan = graph.elements.find(item => item.data.id === 'orphan');
-  const destination = graph.elements.find(item => item.data.id === 'n3');
+  assert.equal(graph.looseReplyCount, 1);
+  assert.equal(graph.elements.some(item => item.data.id === 'orphan'), false);
+  assert.equal(graph.elements.some(item => item.data.id === 'loose-edge'), false);
+  const diagnostic = build(data, {showLooseReplies: true});
+  const orphan = diagnostic.elements.find(item => item.data.id === 'orphan');
+  const destination = diagnostic.elements.find(item => item.data.id === 'n3');
   assert.ok(orphan.position.x > destination.position.x);
-  assert.equal(graph.elements.filter(item => item.group === 'edges').length, data.edges.length);
+  assert.equal(diagnostic.elements.filter(item => item.group === 'edges').length, data.edges.length);
+});
+
+test('an edge between relevant nodes still needs membership in a reconstructed path', () => {
+  const data = fixture();
+  data.edges.push({id: 'unrelated', source: 'n2a', target: 'n2b', active: true});
+  assert.equal(build(data).elements.some(item => item.data.id === 'unrelated'), false);
+});
+
+test('partial paths remain visible when the target does not respond', () => {
+  const data = fixture();
+  data.routes = [{id: 1, label: 'Route A', complete: false, active: true, status: 'active',
+    hops: [{ttl: 1, node_id: 'n1'}, {ttl: 2, node_id: 'n2a'}]}];
+  const graph = build(data);
+  assert.deepEqual(graph.routePaths[1].nodes, ['probe', 'n1', 'n2a']);
+  assert.equal(graph.elements.some(item => item.data.id === 'n2a'), true);
+  assert.equal(graph.elements.some(item => item.data.id === 'n3'), false);
 });
 
 test('unobserved hops have an explicit gap and never become a measured direct link', () => {

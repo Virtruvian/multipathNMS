@@ -41,6 +41,7 @@
       <div class="graph-direction">SOURCE <span>→</span> TARGET</div>
       <button id="graph-expand" type="button" aria-expanded="false">Expand</button>
       <button id="graph-all" type="button">All routes</button>
+      <button id="graph-loose" type="button" aria-pressed="false">Show loose replies</button>
       <button id="graph-fit" type="button">Fit all</button>
       <button id="graph-readable" type="button">Readable view</button>
       <button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button>
@@ -48,7 +49,7 @@
     </div>
     <div id="cy"></div>
     <div id="graph-empty" class="graph-empty">Waiting for topology discovery…<small>Use Discover now to find the first paths.</small></div>
-    <div class="graph-caption">Drag to pan · Scroll to zoom · Click a router or link for details · RTT is measured from the probe</div>
+    <div class="graph-caption"><span id="graph-filter-info">Only replies belonging to reconstructed paths are shown.</span> · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
   </div>
 
   <aside class="topology-sidebar">
