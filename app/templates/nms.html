@@ -4,7 +4,7 @@
 <section class="hero-row">
   <div>
     <h1>Route Monitor</h1>
-    <p>ICMP health, independent service reachability and confirmed route observations.</p>
+    <p>Host health and route observations. Select a host for its topology and service details.</p>
   </div>
   <div class="live-badge">● LIVE</div>
 </section>
@@ -53,7 +53,6 @@
           <span>Confirmed absent <b class="routes-missing">{{ missing_routes }}</b></span>
           <span>Pending <b class="routes-pending">{{ routes.get('pending_routes', 0) }}</b></span>
         </div>
-        <div class="service-checks"></div>
       </article>
       {% else %}
       <div class="empty">No targets yet. Add one under <a href="/settings">Settings</a>.</div>
@@ -78,6 +77,5 @@
 {% endblock %}
 {% block scripts %}
 <script id="initial-service-checks" type="application/json">{{ service_checks|tojson }}</script>
-<script src="/static/service-health.js"></script>
 <script src="/static/nms.js"></script>
 {% endblock %}

@@ -37,7 +37,6 @@ function updateServices(targetId, checks) {
   const card = document.getElementById('target-' + targetId);
   if (!card) return;
   card.dataset.serviceDown = String((checks || []).filter(check => check.status === 'down').length);
-  ServiceHealth.render(card.querySelector('.service-checks'), checks);
   recount();
 }
 

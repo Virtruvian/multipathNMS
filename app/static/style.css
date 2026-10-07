@@ -227,7 +227,6 @@ pre{
 .service-healthy{border-color:var(--green)}
 .service-down{border-color:var(--red);color:var(--red)}
 .service-pending,.service-degraded,.service-suspect{border-color:var(--yellow);color:var(--yellow)}
-.target-card>.service-checks{grid-column:1/-1}
 .route-card.route-pending,.route-card.route-different-target{border-color:#64748b;box-shadow:inset 3px 0 0 #64748b}
 .route-pending .route-state,.route-different-target .route-state{color:#94a3b8}
 .settings-row{flex-wrap:wrap}
