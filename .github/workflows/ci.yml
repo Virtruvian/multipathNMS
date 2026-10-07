@@ -150,6 +150,40 @@ jobs:
           print("Service API: TCP connect/refusal, phase evidence, automatic incident, isolated counters, config reset, download and all pages passed")
           PY
 
+      - name: Monitoring survives browser connection changes
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          import json
+          from urllib.request import Request, urlopen
+          import websockets
+
+          def request(path, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
+                                   headers={"Content-Type": "application/json"}, method=method), timeout=5) as response:
+                  return json.load(response) if response.status != 204 else None
+
+          async def navigate():
+              for attempt in range(40):
+                  async with websockets.connect("ws://127.0.0.1:8080/ws/live"):
+                      await asyncio.sleep(.1)
+
+          target = request("/api/targets", "POST", {"name":"Browser CI", "address":"127.0.0.1", "tcp_port":8080})
+          try:
+              asyncio.run(navigate())
+              first = next(item for item in request("/api/targets") if item["id"] == target["id"])
+              assert first["status"] == "healthy" and first["last_seen"], first
+              asyncio.run(asyncio.sleep(3))
+              second = next(item for item in request("/api/targets") if item["id"] == target["id"])
+              assert second["status"] == "healthy" and second["updated_at"] != first["updated_at"], second
+              health = request("/healthz")
+              assert health["status"] == "ok" and all(health["workers"].values()), health
+              print("Monitoring: repeated websocket navigation, fresh ICMP samples and live workers passed")
+          finally:
+              request(f"/api/targets/{target['id']}", "DELETE")
+          PY
+
       - name: Container logs
         if: always()
         run: docker logs multipathnms-ci || true

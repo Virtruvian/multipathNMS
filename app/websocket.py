@@ -14,7 +14,9 @@ class ConnectionManager:
 
     async def broadcast(self, payload: dict) -> None:
         dead: list[WebSocket] = []
-        for connection in self._connections:
+        # Sending yields to connect/disconnect handlers. Iterate a snapshot so
+        # browser navigation cannot invalidate the iterator and stop a monitor.
+        for connection in tuple(self._connections):
             try:
                 await connection.send_json(payload)
             except Exception:

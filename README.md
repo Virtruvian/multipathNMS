@@ -15,6 +15,17 @@ TCP/HTTPS badges appear in topology. The NMS summary still counts confirmed serv
 Topology opens in the **TCP** view with **Fit all** framing the full graph.
 ICMP, comparison and Readable view remain available; live updates retain manual zoom and pan.
 
+Live broadcasts use a snapshot of browser connections, so opening or closing a page
+during an update cannot stop the monitoring loops. Unexpected ICMP/service check
+errors are logged with the target ID and retried in the next regular round; other
+targets continue to be checked. These internal errors do not count as network failures.
+Topology discovery error events include the host name and address.
+
+`GET /healthz` reports whether the ICMP, service and topology worker tasks are
+running in its `workers` object. It returns HTTP 503 if a worker is absent or has
+stopped, so a responding web server alone no longer passes the Docker health check.
+This checks worker task liveness, not target reachability or measurement freshness.
+
 The topology view is a network path analysis: a straight primary path runs from
 source to target, with alternatives branching and merging. A shared target endpoint
 represents paths with different measured hop counts; their original TTLs remain in

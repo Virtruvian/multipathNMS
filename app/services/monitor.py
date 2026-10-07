@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 
@@ -12,12 +13,19 @@ from .health import RollingStats, ping_target
 from .diagnostics import diagnostics, latest_diagnostic
 
 
+logger = logging.getLogger(__name__)
+
+
 class MonitorService:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._stats: dict[int, RollingStats] = defaultdict(RollingStats)
         self._success_window: dict[int, deque[bool]] = defaultdict(lambda: deque(maxlen=30))
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
 
     def start(self) -> None:
         if not self._task or self._task.done():
@@ -35,9 +43,21 @@ class MonitorService:
 
     async def _run(self) -> None:
         while not self._stop.is_set():
-            with SessionLocal() as db:
-                target_ids = list(db.scalars(select(Target.id).where(Target.enabled.is_(True))))
-            await asyncio.gather(*(self._check_target(target_id) for target_id in target_ids))
+            try:
+                with SessionLocal() as db:
+                    target_ids = list(db.scalars(select(Target.id).where(Target.enabled.is_(True))))
+                results = await asyncio.gather(
+                    *(self._check_target(target_id) for target_id in target_ids),
+                    return_exceptions=True,
+                )
+                for target_id, result in zip(target_ids, results):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    if isinstance(result, Exception):
+                        logger.error("ICMP health check failed for target id %s; retrying next round", target_id,
+                                     exc_info=(type(result), result, result.__traceback__))
+            except Exception:
+                logger.exception("ICMP monitor round failed; retrying next round")
             await asyncio.sleep(settings.health_interval_seconds)
 
     async def _check_target(self, target_id: int) -> None:

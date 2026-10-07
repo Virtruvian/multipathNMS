@@ -120,8 +120,15 @@ def root() -> RedirectResponse:
 
 
 @app.get("/healthz")
-def healthz() -> dict:
-    return {"status": "ok"}
+def healthz() -> JSONResponse:
+    workers = {
+        "icmp": monitor.is_running,
+        "services": services.is_running,
+        "topology": topology.is_running,
+    }
+    running = all(workers.values())
+    return JSONResponse({"status": "ok" if running else "degraded", "workers": workers},
+                        status_code=200 if running else 503)
 
 
 @app.get("/nms", response_class=HTMLResponse)

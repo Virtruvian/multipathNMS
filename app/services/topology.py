@@ -46,6 +46,10 @@ class TopologyService:
         self._stop = asyncio.Event()
         self._locks: defaultdict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     def start(self) -> None:
         if not self._task or self._task.done():
             self._stop.clear()
@@ -155,10 +159,11 @@ class TopologyService:
         target_id: int, exc: Exception, *, protocol: str = "icmp", destination_port: int = 0,
     ) -> None:
         scope = f"{protocol.upper()}{(':' + str(destination_port)) if destination_port else ''}"
-        message = f"{scope} topology discovery failed: {str(exc)[:500]}"
         with SessionLocal() as db:
-            if not db.get(Target, target_id):
+            target = db.get(Target, target_id)
+            if not target:
                 return
+            message = f"{target.name} ({target.address}): {scope} topology discovery failed: {str(exc)[:500]}"
             state = probe_state(db, target_id, protocol, destination_port)
             state.last_attempt = datetime.now(timezone.utc)
             state.error = str(exc)[:500]

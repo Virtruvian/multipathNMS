@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -11,6 +12,9 @@ from ..models import Event, ServiceSample, ServiceState, Target, iso_utc
 from ..websocket import manager
 from .service_health import ServiceResult, check_service
 from .diagnostics import diagnostics, latest_diagnostic
+
+
+logger = logging.getLogger(__name__)
 
 
 def service_config(target: Target, method: str) -> tuple[str, int, str]:
@@ -58,6 +62,10 @@ class ServiceMonitor:
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._slots = asyncio.Semaphore(8)
 
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     def start(self) -> None:
         if not self._task or self._task.done():
             self._task = asyncio.create_task(self._run(), name="service-monitor")
@@ -72,9 +80,20 @@ class ServiceMonitor:
 
     async def _run(self) -> None:
         while True:
-            with SessionLocal() as db:
-                ids = list(db.scalars(select(Target.id).where(Target.enabled.is_(True))))
-            await asyncio.gather(*(self.check_target(target_id) for target_id in ids))
+            try:
+                with SessionLocal() as db:
+                    ids = list(db.scalars(select(Target.id).where(Target.enabled.is_(True))))
+                results = await asyncio.gather(
+                    *(self.check_target(target_id) for target_id in ids), return_exceptions=True,
+                )
+                for target_id, result in zip(ids, results):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    if isinstance(result, Exception):
+                        logger.error("Service check failed for target id %s; retrying next round", target_id,
+                                     exc_info=(type(result), result, result.__traceback__))
+            except Exception:
+                logger.exception("Service monitor round failed; retrying next round")
             await asyncio.sleep(settings.service_interval_seconds)
 
     async def check_target(self, target_id: int) -> None:

@@ -126,6 +126,9 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - frozen saved routes and successful observations, independent ping/service/TCP samples and per-method recovery evidence
 - persistent per-target cooldown, global concurrency/queue bounds and cancellation on edit/pause/delete
 - diagnostic summaries and JSON downloads in existing topology details; compact NMS unchanged
+- browser connection changes during broadcasts cannot interrupt monitor tasks
+- unexpected ICMP/service round errors are logged and retried without counting as network failures
+- health endpoint checks background task liveness; topology failure events identify the host
 
 ## Next implementation step
 
