@@ -59,6 +59,7 @@ class Target(Base):
     )
     service_states: Mapped[list["ServiceState"]] = relationship(back_populates="target", cascade="all, delete-orphan")
     service_samples: Mapped[list["ServiceSample"]] = relationship(back_populates="target", cascade="all, delete-orphan")
+    diagnostics: Mapped[list["DiagnosticIncident"]] = relationship(back_populates="target", cascade="all, delete-orphan")
 
 
 class Sample(Base):
@@ -69,6 +70,7 @@ class Sample(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     success: Mapped[bool] = mapped_column(Boolean)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     target: Mapped[Target] = relationship(back_populates="samples")
 
@@ -225,6 +227,7 @@ class ServiceState(Base):
     resolved_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phase_results: Mapped[str | None] = mapped_column(Text, nullable=True)
     target: Mapped[Target] = relationship(back_populates="service_states")
 
 
@@ -243,4 +246,24 @@ class ServiceSample(Base):
     resolved_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phase_results: Mapped[str | None] = mapped_column(Text, nullable=True)
     target: Mapped[Target] = relationship(back_populates="service_samples")
+
+
+class DiagnosticIncident(Base):
+    __tablename__ = "diagnostic_incidents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    reason: Mapped[str] = mapped_column(String(255))
+    revision: Mapped[int] = mapped_column(Integer)
+    config_json: Mapped[str] = mapped_column(Text)
+    baseline_json: Mapped[str] = mapped_column(Text)
+    results_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recovery_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target: Mapped[Target] = relationship(back_populates="diagnostics")

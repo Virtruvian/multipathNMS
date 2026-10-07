@@ -28,30 +28,35 @@ class TcpResult:
     stderr: str = ""
 
 
-async def run_tcp_trace(target: str, destination_port: int = 443) -> TcpResult:
+async def run_tcp_trace(target: str, destination_port: int = 443, *,
+                        flows: int | None = None, hop_timeout_seconds: float | None = None) -> TcpResult:
     if not 1 <= destination_port <= 65535:
         raise ValueError("TCP destination port must be between 1 and 65535")
     resolved_ip = await resolve_target(target)
     if ipaddress.ip_address(resolved_ip).version != 4:
         raise ValueError("Topology tracing currently supports IPv4 only")
+    flow_count = settings.tcp_flows if flows is None else flows
+    hop_timeout = settings.tcp_hop_timeout_seconds if hop_timeout_seconds is None else hop_timeout_seconds
+    if not 1 <= flow_count <= 8 or not 0.1 <= hop_timeout <= 5:
+        raise ValueError("Invalid TCP trace bounds")
     traces, errors, ports = [], [], []
     # Fixed ports are opt-in: some networks stop answering that probe sequence.
-    first_port = 40000 + secrets.randbelow(20000 - settings.tcp_flows)
-    for offset in range(settings.tcp_flows):
+    first_port = 40000 + secrets.randbelow(20000 - flow_count)
+    for offset in range(flow_count):
         source_port = first_port + offset if settings.tcp_fixed_source_port else None
         source_args = [f"--sport={source_port}"] if source_port is not None else []
         process = await asyncio.create_subprocess_exec(
             "traceroute", "-4", "-n", "-T", "-O", "info",
             *source_args, "-N", "1", "-q", "1",
             "-m", str(settings.voyage_max_ttl),
-            "-w", str(settings.tcp_hop_timeout_seconds),
+            "-w", str(hop_timeout),
             "-z", str(settings.tcp_sendwait_seconds),
             "-p", str(destination_port), resolved_ip,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env={"LC_ALL": "C", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
         )
         deadline = settings.voyage_max_ttl * (
-            settings.tcp_hop_timeout_seconds + settings.tcp_sendwait_seconds
+            hop_timeout + settings.tcp_sendwait_seconds
         ) + 5
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), deadline)

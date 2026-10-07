@@ -43,10 +43,15 @@ def migrate_probe_scopes(bind) -> None:
             "consecutive_misses": "INTEGER NOT NULL DEFAULT 0",
             "resolved_ip": "VARCHAR(64)",
         },
+        "service_states": {"phase_results": "TEXT"},
+        "service_samples": {"phase_results": "TEXT"},
+        "samples": {"address": "VARCHAR(255)"},
     }
     with bind.begin() as connection:
         inspector = inspect(connection)
         for table, fields in additions.items():
+            if not inspector.has_table(table):
+                continue  # New tables are created by init_db, not an ALTER migration.
             columns = {column["name"] for column in inspector.get_columns(table)}
             for name, definition in fields.items():
                 if name not in columns:

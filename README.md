@@ -58,6 +58,43 @@ service sample are stored separately in SQLite. Failed HTTPS does not change TCP
 or ICMP health. Edited settings immediately invalidate the affected current state;
 old samples remain, and results from an older configuration revision are discarded.
 
+Each TCP/HTTPS result now stores separate **DNS**, **TCP**, **TLS** and **HTTP**
+phase durations and the failed phase. Later phases remain **NOT-RUN** after an
+earlier failure; numeric IP targets show DNS as **SKIPPED**. The recorded DNS
+addresses and actual connected IP remain separate. TLS still verifies the original
+hostname even though DNS and TCP connection are measured separately. Phase durations
+are per step, not cumulative. These details appear in the existing target-details
+panel in topology; the compact NMS layout is unchanged.
+
+### Automatic diagnostic evidence
+
+ICMP suspect/down/degraded health or a failed enabled service check schedules an
+independent diagnostic round. It captures saved routes and their measurement times,
+the latest successful ping/service observations, three extra pings, enabled normal
+TCP/HTTPS checks and one short TCP trace (one sample, 0.5-second hop waits).
+It does not run extra Voyage/MDA scans. Diagnostics do not increment normal service
+failure streaks or route-missing counters and never replace the current topology.
+
+At most two rounds run concurrently, at most 16 targets wait/run, and a persistent
+five-minute per-target cooldown limits repeat probing during an ongoing problem.
+The round has a 30-second probe deadline; completed evidence is retained if another
+probe times out. Edits, pause and deletion cancel in-flight diagnosis; previous
+configuration evidence is labelled historical. A restart marks unfinished rounds
+interrupted. Subsequent regular ICMP/TCP/HTTPS recoveries are saved per method with
+their measurements, not treated as proof that every component has recovered.
+
+The target-details panel shows the latest diagnosis and its reason, evidence summary
+and recovery times. **Download diagnosis** saves the frozen before/during/recovery
+evidence as JSON. All stored incidents can also be read through
+`GET /api/targets/{id}/diagnostics`; one full incident is available through
+`GET /api/targets/{id}/diagnostics/{incident_id}`. History follows target deletion.
+
+TCP route comparison requires the same resolved IPv4 address and destination port.
+An identical sample can match a saved route; a different sample can reflect multipath
+or a route change. A silent hop, partial trace or missing endpoint reply does not
+identify a failed router. Connected IPv6 services are labelled unsupported for the
+IPv4-only diagnostic trace, rather than compared with a different IPv4 destination.
+
 A successfully completed topology scan that omits a known path removes it from the
 current graph immediately but first records **pending**. The third consecutive
 completed scan that omits that path for the same destination IP and protocol/port
@@ -206,6 +243,9 @@ SERVICE_INTERVAL_SECONDS=30
 SERVICE_TIMEOUT_SECONDS=5
 SERVICE_FAILURES_BEFORE_DOWN=3
 ROUTE_MISSING_AFTER_SCANS=3
+DIAGNOSTICS_ENABLED=true
+DIAGNOSTIC_COOLDOWN_SECONDS=300
+DIAGNOSTIC_TIMEOUT_SECONDS=30
 SUSPECT_AFTER_FAILURES=3
 DOWN_AFTER_FAILURES=5
 DEGRADED_LOSS_PERCENT=10
@@ -218,6 +258,11 @@ existing databases during migration. Each target then keeps its own saved port.
 TCP shares `VOYAGE_MAX_TTL`. Each trace has a timeout bound of
 `max_ttl × (hop_timeout + sendwait) + 5` seconds; a round includes all configured
 traces plus the ICMP scan. IPv4 topology is supported in this version.
+
+`DIAGNOSTICS_ENABLED=false` disables automatic incident probes. The cooldown and
+probe deadline are configurable through the two diagnostic settings above.
+Existing history is retained by additive migrations; legacy ping samples without
+an address remain stored but are not used as a baseline for the current address.
 
 Avoid setting topology discovery to very short intervals: MDA intentionally sends substantially more probes than a normal ping.
 

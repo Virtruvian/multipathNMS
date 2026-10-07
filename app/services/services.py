@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -9,6 +10,7 @@ from ..database import SessionLocal
 from ..models import Event, ServiceSample, ServiceState, Target, iso_utc
 from ..websocket import manager
 from .service_health import ServiceResult, check_service
+from .diagnostics import diagnostics, latest_diagnostic
 
 
 def service_config(target: Target, method: str) -> tuple[str, int, str]:
@@ -44,6 +46,8 @@ def service_payload(db, target: Target) -> list[dict]:
             "confirmation_threshold": settings.service_failures_before_down,
             "last_checked": iso_utc(state.last_checked) if state and state.last_checked else None,
             "last_success": iso_utc(state.last_success) if state and state.last_success else None,
+            **(json.loads(state.phase_results) if state and enabled and state.phase_results else
+               {"phases": [], "failed_phase": None, "resolved_addresses": []}),
         })
     return result
 
@@ -94,9 +98,10 @@ class ServiceMonitor:
                 target = db.get(Target, target_id)
                 if target:
                     payload = service_payload(db, target)
+                    diagnostic = latest_diagnostic(db, target)
                 else:
                     return
-            await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": payload})
+            await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": payload, "diagnostic": diagnostic})
 
     @staticmethod
     def _record(target_id: int, method: str, config: tuple[str, int, str], result: ServiceResult, *, expected_revision: int | None = None) -> None:
@@ -117,6 +122,9 @@ class ServiceMonitor:
             previous = state.status
             state.last_checked = now
             state.latency_ms, state.resolved_ip, state.http_status, state.error = result.latency_ms, result.resolved_ip, result.http_status, result.error
+            phase_results = json.dumps({"phases": result.phases, "failed_phase": result.failed_phase,
+                                        "resolved_addresses": result.resolved_addresses})
+            state.phase_results = phase_results
             state.consecutive_failures = 0 if result.success else state.consecutive_failures + 1
             state.status = "healthy" if result.success else "down" if state.consecutive_failures >= settings.service_failures_before_down else "pending"
             if result.success:
@@ -129,8 +137,12 @@ class ServiceMonitor:
                 db.add(Event(target_id=target_id, severity="info", event_type="service_recovered", message=f"{label} reachable again"))
             db.add(ServiceSample(target_id=target_id, created_at=now, method=method, address=config[0], port=config[1], path=config[2],
                                  success=result.success, latency_ms=result.latency_ms, resolved_ip=result.resolved_ip,
-                                 http_status=result.http_status, error=result.error))
+                                 http_status=result.http_status, error=result.error, phase_results=phase_results))
             db.commit()
+        if not result.success:
+            diagnostics.request(target_id, f"{method.upper()} {(result.failed_phase or 'check').upper()}: {result.error or 'failed'}")
+        elif previous in {"pending", "down"}:
+            diagnostics.note_recovery(target_id, method)
 
 
 services = ServiceMonitor()

@@ -20,7 +20,15 @@ async def ping_target(address: str, timeout_seconds: int = 1) -> HealthResult:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout_seconds + 2)
+    except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+        if process.returncode is None:
+            process.kill()
+        await process.communicate()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        return HealthResult(False, None, f'Ping timed out after {timeout_seconds + 2} seconds')
     text = stdout.decode(errors='replace')
     if process.returncode != 0:
         return HealthResult(False, None, stderr.decode(errors='replace').strip() or text.strip())

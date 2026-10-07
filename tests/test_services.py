@@ -1,5 +1,6 @@
 import asyncio
 import ssl
+import socket
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -77,16 +78,21 @@ class ServiceProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success)
         self.assertEqual('127.0.0.1', result.resolved_ip)
         self.assertIsNotNone(result.latency_ms)
+        self.assertEqual(['skipped', 'ok'], [phase['status'] for phase in result.phases])
+        self.assertEqual(('127.0.0.1',), result.resolved_addresses)
         self.servers[-1].close()
         await self.servers[-1].wait_closed()
         result = await check_service('127.0.0.1', port)
         self.assertFalse(result.success)
         self.assertTrue(result.error)
+        self.assertEqual('tcp', result.failed_phase)
 
     async def test_https_verifies_tls_and_custom_path_without_following_redirect(self):
         port, requests = await self.start_server(b'HTTP/1.1 302 Found\r\nLocation: https://elsewhere.invalid/\r\n\r\n', tls=True)
         result = await check_service('localhost', port, https=True, path='/health?ready=1', ssl_context=self.trusted_context())
         self.assertTrue(result.success)
+        self.assertEqual(['dns', 'tcp', 'tls', 'http'], [phase['phase'] for phase in result.phases])
+        self.assertTrue(all(phase['status'] == 'ok' and phase['duration_ms'] >= 0 for phase in result.phases))
         self.assertEqual(302, result.http_status)
         self.assertEqual(1, len(requests))
         self.assertIn(b'GET /health?ready=1 HTTP/1.1', requests[0])
@@ -98,6 +104,8 @@ class ServiceProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.success)
         self.assertEqual(503, result.http_status)
         self.assertEqual('HTTP 503', result.error)
+        self.assertEqual('http', result.failed_phase)
+        self.assertEqual(['ok', 'ok', 'ok', 'failed'], [phase['status'] for phase in result.phases])
         self.assertIsNotNone(result.latency_ms)
 
     async def test_untrusted_certificate_is_rejected_by_default(self):
@@ -114,6 +122,8 @@ class ServiceProbeTests(unittest.IsolatedAsyncioTestCase):
             loop.set_debug(debug)
         self.assertFalse(result.success)
         self.assertIn('CERTIFICATE_VERIFY_FAILED', result.error)
+        self.assertEqual('tls', result.failed_phase)
+        self.assertEqual(['ok', 'ok', 'failed', 'not-run'], [phase['status'] for phase in result.phases])
 
     async def test_interim_http_response_and_malformed_final_status(self):
         port, _ = await self.start_server(b'HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 200 OK\r\n\r\n', tls=True)
@@ -123,19 +133,26 @@ class ServiceProbeTests(unittest.IsolatedAsyncioTestCase):
         result = await check_service('localhost', port, https=True, ssl_context=self.trusted_context())
         self.assertFalse(result.success)
         self.assertIn('Invalid HTTP', result.error)
+        port, _ = await self.start_server(b'HTTP/1.1 103 Early Hints\r\n\r\n', tls=True)
+        result = await check_service('localhost', port, https=True, ssl_context=self.trusted_context())
+        self.assertFalse(result.success)
+        self.assertEqual('http', result.failed_phase)
+        self.assertIsNone(result.http_status)  # Interim status is not a final endpoint response.
 
     async def test_timeout_and_cancellation_do_not_become_successful_checks(self):
         port, _ = await self.start_server(tls=True)
         stalled = await check_service('localhost', port, https=True, timeout=0.05, ssl_context=self.trusted_context())
         self.assertFalse(stalled.success)
         self.assertIn('Timed out', stalled.error)
+        self.assertEqual('http', stalled.failed_phase)
         with patch('app.services.service_health.asyncio.open_connection', new_callable=AsyncMock, side_effect=TimeoutError):
-            result = await check_service('example.org', 443, timeout=0.5)
+            port, _ = await self.start_server()
+            result = await check_service('127.0.0.1', port, timeout=0.5)
             self.assertFalse(result.success)
             self.assertIn('Timed out', result.error)
         with patch('app.services.service_health.asyncio.open_connection', new_callable=AsyncMock, side_effect=asyncio.CancelledError):
             with self.assertRaises(asyncio.CancelledError):
-                await check_service('example.org', 443)
+                await check_service('127.0.0.1', port)
 
     def test_https_path_and_api_validation_reject_header_injection_and_external_urls(self):
         for path in ('https://example.org/', '//other.example/', '/\r\nX: bad', '/space here', '/#fragment'):
@@ -149,6 +166,40 @@ class ServiceProbeTests(unittest.IsolatedAsyncioTestCase):
         for field in ('name', 'address', 'enabled'):
             with self.assertRaises(ValidationError):
                 TargetUpdate(**{field: None})
+
+    async def test_dns_errors_and_timeouts_never_attempt_tcp(self):
+        loop = asyncio.get_running_loop()
+        async def stalled_dns(*args, **kwargs):
+            await asyncio.Event().wait()
+        for side_effect in (socket.gaierror('name not found'), stalled_dns):
+            with patch.object(loop, 'getaddrinfo', new_callable=AsyncMock, side_effect=side_effect), \
+                 patch.object(loop, 'sock_connect', new_callable=AsyncMock) as connect:
+                result = await check_service('absent.invalid', 443, https=True, timeout=.02)
+            self.assertFalse(result.success)
+            self.assertEqual('dns', result.failed_phase)
+            self.assertEqual(['failed', 'not-run', 'not-run', 'not-run'], [phase['status'] for phase in result.phases])
+            connect.assert_not_awaited()
+
+    async def test_failed_first_dns_address_falls_back_and_reports_actual_peer(self):
+        port, _ = await self.start_server()
+        loop = asyncio.get_running_loop()
+        endpoints = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, '', (ip, port))
+                     for ip in ('127.0.0.2', '127.0.0.1')]
+        with patch.object(loop, 'getaddrinfo', new_callable=AsyncMock, return_value=endpoints):
+            result = await check_service('localhost', port)
+        self.assertTrue(result.success)
+        self.assertEqual('127.0.0.1', result.resolved_ip)
+        self.assertEqual(('127.0.0.2', '127.0.0.1'), result.resolved_addresses)
+
+    async def test_connect_timeout_preserves_dns_evidence_and_leaves_tls_unmeasured(self):
+        loop = asyncio.get_running_loop()
+        async def stalled_connect(*args):
+            await asyncio.Event().wait()
+        with patch.object(loop, 'sock_connect', new_callable=AsyncMock, side_effect=stalled_connect):
+            result = await check_service('127.0.0.1', 443, https=True, timeout=.02)
+        self.assertEqual('tcp', result.failed_phase)
+        self.assertEqual(('127.0.0.1',), result.resolved_addresses)
+        self.assertEqual(['skipped', 'failed', 'not-run', 'not-run'], [phase['status'] for phase in result.phases])
 
 
 class ServicePersistenceTests(unittest.TestCase):
@@ -260,3 +311,19 @@ class ServicePersistenceTests(unittest.TestCase):
             self.assertEqual(2, db.get(Target, self.target_id).service_revision)
             self.assertEqual([], list(db.scalars(select(ServiceState))))
             self.assertEqual(1, len(list(db.scalars(select(ServiceSample)))))
+
+    def test_phase_results_are_durable_and_disabled_checks_hide_them(self):
+        phases = [{'phase': 'dns', 'status': 'ok', 'duration_ms': 1},
+                  {'phase': 'tcp', 'status': 'failed', 'duration_ms': 5, 'error': 'refused'}]
+        ServiceMonitor._record(self.target_id, 'tcp', ('example.org', 443, ''),
+            ServiceResult(False, error='refused', phases=phases, failed_phase='tcp', resolved_addresses=('8.8.8.8',)))
+        with self.sessions() as db:
+            target = db.get(Target, self.target_id)
+            payload = service_payload(db, target)[0]
+            self.assertEqual(phases, payload['phases'])
+            self.assertEqual('tcp', payload['failed_phase'])
+            self.assertEqual(['8.8.8.8'], payload['resolved_addresses'])
+            self.assertEqual(db.scalar(select(ServiceState)).phase_results, db.scalar(select(ServiceSample)).phase_results)
+            target.tcp_check_enabled = False
+            db.commit()
+            self.assertEqual([], service_payload(db, target)[0]['phases'])

@@ -121,7 +121,12 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - additive schema upgrades retain samples, route IDs, hashes and historical events
 - API timestamps explicitly carry UTC because SQLite omits timezone metadata
 - service checks and route confirmation are exposed in both NMS and topology views
+- separate DNS/TCP/TLS/HTTP timings and failure phases, preserving TLS hostname verification
+- bounded automatic incident evidence on ICMP/service problems; extra probes never increment normal counters
+- frozen saved routes and successful observations, independent ping/service/TCP samples and per-method recovery evidence
+- persistent per-target cooldown, global concurrency/queue bounds and cancellation on edit/pause/delete
+- diagnostic summaries and JSON downloads in existing topology details; compact NMS unchanged
 
 ## Next implementation step
 
-Add faster route-specific verification when topology changes or target health becomes suspect, plus time-series charts for RTT/loss and route-change history. Keep these probes conservative and do not infer failure solely from an ICMP-silent intermediate hop.
+Add reference-target correlation, multiple measurement locations and time-series charts for RTT/loss and route-change history. Keep probes conservative and do not infer failure solely from an ICMP-silent intermediate hop.

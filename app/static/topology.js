@@ -186,8 +186,10 @@ checkServicesButton.addEventListener('click', async () => {
     if (!response.ok) throw new Error(target.detail || 'Service check failed');
     if (currentTopology && select.value === targetId) {
       currentTopology.service_checks = target.service_checks;
+      if ('diagnostic' in target) currentTopology.diagnostic = target.diagnostic;
       currentTopology.target = {...currentTopology.target, ...target};
       renderServiceChecks(currentTopology);
+      if (detailSelection.kind === 'target') showTargetDetails();
     }
   } catch (error) {
     if (select.value === targetId) rawOutput.textContent = String(error);
@@ -257,14 +259,38 @@ function showTargetDetails() {
   if (!currentTopology) return;
   detailSelection = {kind: 'target', id: null};
   const data = currentTopology;
-  setDetails(data.target.name, [
+  const rows = [
     ['Address', data.target.address],
     ['ICMP health', String(data.target.status || 'unknown').toUpperCase()],
     ['ICMP ping RTT', fmt(data.target.latency_ms) + ' ms'],
     ['ICMP ping loss', fmt(data.target.loss_percent) + '%'],
     ['ICMP ping jitter', fmt(data.target.jitter_ms) + ' ms'],
     ['Active routes in view', String((currentGraph.visibleRoutes || []).filter(route => route.active).length)]
-  ], 'Node RTT is measured from this probe, not between routers. Dotted segments show unobserved hops.');
+  ];
+  for (const check of data.service_checks || []) {
+    if (!check.enabled) continue;
+    for (const phase of check.phases || []) {
+      rows.push([check.method.toUpperCase() + ' ' + phase.phase.toUpperCase(),
+        phase.status.toUpperCase() + (phase.duration_ms == null ? '' : ' · ' + fmt(phase.duration_ms) + ' ms')
+        + (phase.error ? ' · ' + phase.error : '')]);
+    }
+  }
+  const incident = data.diagnostic;
+  if (incident) {
+    rows.push(['Automatic diagnosis', '#' + incident.id + ' · ' + incident.status.toUpperCase()],
+      ['Started', localTime(incident.started_at || incident.created_at)], ['Trigger', incident.reason],
+      ['Evidence', incident.summary]);
+    if (!incident.matches_current_config) rows.push(['Configuration', 'Historical diagnosis for previous settings']);
+    if (incident.error) rows.push(['Diagnostic error', incident.error]);
+    for (const [method, time] of Object.entries(incident.recoveries || {})) rows.push([method.toUpperCase() + ' recovered', localTime(time)]);
+  }
+  setDetails(data.target.name, rows, 'Node RTT is measured from this probe, not between routers. Dotted segments show unobserved hops. Diagnostic samples do not prove a faulty router.');
+  if (incident) {
+    const link = document.createElement('a');
+    link.href = '/api/targets/' + data.target.id + '/diagnostics/' + incident.id + '?download=true';
+    link.textContent = 'Download diagnosis #' + incident.id;
+    details.appendChild(link);
+  }
 }
 
 document.getElementById('graph-fit').addEventListener('click', fitAll);
@@ -553,6 +579,12 @@ window.addEventListener('multipath-live', event => {
   if (event.detail.type === 'service_health' && currentTopology && String(event.detail.target_id) === select.value) {
     currentTopology.service_checks = event.detail.service_checks;
     renderServiceChecks(currentTopology);
+    if ('diagnostic' in event.detail) currentTopology.diagnostic = event.detail.diagnostic;
+    if (detailSelection.kind === 'target') showTargetDetails();
+  }
+  if (event.detail.type === 'diagnostic_update' && currentTopology && String(event.detail.target_id) === select.value) {
+    currentTopology.diagnostic = event.detail.diagnostic;
+    if (detailSelection.kind === 'target') showTargetDetails();
   }
   if (
     event.detail.type === 'topology_update'
@@ -567,6 +599,8 @@ window.addEventListener('multipath-live', event => {
     && String(event.detail.target.id) === select.value
   ) {
     currentTopology.target = Object.assign({}, currentTopology.target, event.detail.target);
+    if ('diagnostic' in event.detail) currentTopology.diagnostic = event.detail.diagnostic;
+    else if ('diagnostic' in event.detail.target) currentTopology.diagnostic = event.detail.target.diagnostic;
     renderServiceChecks(currentTopology);
     if (detailSelection.kind === 'target') showTargetDetails();
   }

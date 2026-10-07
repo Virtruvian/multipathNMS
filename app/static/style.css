@@ -152,6 +152,7 @@ body.graph-expanded-active{overflow:hidden}
 .details{padding:16px}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}
 .kv span{color:var(--muted)}
+.kv b{min-width:0;overflow-wrap:anywhere}
 .detail-note{color:var(--muted);margin:16px 0 0}
 details{margin:16px;border-top:1px solid var(--line);padding-top:12px}
 summary{cursor:pointer;color:var(--muted)}

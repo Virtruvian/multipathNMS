@@ -5,7 +5,7 @@ import re
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
@@ -13,11 +13,12 @@ from sqlalchemy import desc, select
 
 from .database import SessionLocal, init_db
 from .config import settings
-from .models import Event, Target, ServiceState, iso_utc
+from .models import DiagnosticIncident, Event, Target, ServiceState, iso_utc
 from .services.monitor import MonitorService, monitor
 from .services.topology import topology, topology_payload
 from .services.services import services, service_payload, service_config, service_enabled
 from .services.service_health import validate_https_path
+from .services.diagnostics import diagnostics, incident_payload, latest_diagnostic
 from .websocket import manager
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,22 +91,24 @@ class TargetUpdate(BaseModel):
 
 
 def serialize_target(target: Target, db) -> dict:
-    return dict(MonitorService._serialize(target), service_checks=service_payload(db, target))
+    return dict(MonitorService._serialize(target), service_checks=service_payload(db, target), diagnostic=latest_diagnostic(db, target))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    diagnostics.start()
     monitor.start()
     topology.start()
     services.start()
     yield
-    await topology.stop()
-    await services.stop()
     await monitor.stop()
+    await services.stop()
+    await topology.stop()
+    await diagnostics.stop()
 
 
-app = FastAPI(title="multipathNMS", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="multipathNMS", version="0.4.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["utc_iso"] = iso_utc
@@ -246,13 +249,20 @@ async def update_target(
         db.commit()
         db.refresh(target)
         result = serialize_target(target, db)
+    if changed:
+        await diagnostics.cancel_target(target_id)
+        with SessionLocal() as db:
+            target = db.get(Target, target_id)
+            if not target:
+                raise HTTPException(status_code=404, detail="Target not found")
+            result = serialize_target(target, db)
     await manager.broadcast({"type": "target_health", "target": result})
-    await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": result["service_checks"]})
+    await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": result["service_checks"], "diagnostic": result["diagnostic"]})
     return result
 
 
 @app.delete("/api/targets/{target_id}", status_code=204)
-def delete_target(target_id: int) -> Response:
+async def delete_target(target_id: int) -> Response:
     with SessionLocal() as db:
         target = db.get(Target, target_id)
         if not target:
@@ -262,6 +272,7 @@ def delete_target(target_id: int) -> Response:
             )
         db.delete(target)
         db.commit()
+    await diagnostics.cancel_target(target_id)
     return Response(status_code=204)
 
 
@@ -311,6 +322,29 @@ def get_topology(target_id: int) -> dict:
                 detail="Target not found",
             )
         return topology_payload(db, target_id)
+
+
+@app.get("/api/targets/{target_id}/diagnostics")
+def get_diagnostics(target_id: int, limit: int = 20) -> list[dict]:
+    with SessionLocal() as db:
+        target = db.get(Target, target_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Target not found")
+        incidents = db.scalars(select(DiagnosticIncident).where(DiagnosticIncident.target_id == target_id)
+                              .order_by(desc(DiagnosticIncident.id)).limit(max(1, min(limit, 100))))
+        return [incident_payload(incident, target) for incident in incidents]
+
+
+@app.get("/api/targets/{target_id}/diagnostics/{incident_id}")
+def get_diagnostic(target_id: int, incident_id: int, download: bool = False):
+    with SessionLocal() as db:
+        target, incident = db.get(Target, target_id), db.get(DiagnosticIncident, incident_id)
+        if not target or not incident or incident.target_id != target_id:
+            raise HTTPException(status_code=404, detail="Diagnostic incident not found")
+        payload = incident_payload(incident, target, evidence=True)
+    if download:
+        return JSONResponse(payload, headers={"Content-Disposition": f'attachment; filename="diagnostic-{incident_id}.json"'})
+    return payload
 
 
 @app.post("/api/topology/{target_id}/discover")

@@ -19,6 +19,7 @@
       if (check.path) parts.push(check.path);
       if (check.resolved_ip) parts.push(check.resolved_ip);
       if (check.error) parts.push(check.error);
+      if (check.failed_phase) parts.push('Failed at ' + check.failed_phase.toUpperCase());
       parts.push(check.last_checked ? 'Checked ' + new Date(check.last_checked).toLocaleString() : check.enabled === false ? 'Enable in Settings' : 'Waiting for check');
       details.textContent = parts.join(' · ');
       badge.append(title, details);

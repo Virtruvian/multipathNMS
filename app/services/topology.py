@@ -24,6 +24,7 @@ from .topology_parser import TopologyObservation, parse_voyage_flat
 from .voyage import run_voyage, resolve_target
 from .tcp import run_tcp_trace, parse_tcp_traces
 from .services import service_payload
+from .diagnostics import latest_diagnostic
 
 
 def route_label(index: int) -> str:
@@ -776,6 +777,7 @@ def topology_payload(db, target_id: int) -> dict:
         },
         "resolved_ip": latest_snapshot.resolved_ip if latest_snapshot else None,
         "service_checks": service_payload(db, target),
+        "diagnostic": latest_diagnostic(db, target),
         "max_ttl": settings.voyage_max_ttl,
         "summary": {
             "active_routes": sum(route.active for route in routes),

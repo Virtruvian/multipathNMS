@@ -9,6 +9,7 @@ from ..database import SessionLocal
 from ..models import Event, Sample, Target, iso_utc
 from ..websocket import manager
 from .health import RollingStats, ping_target
+from .diagnostics import diagnostics, latest_diagnostic
 
 
 class MonitorService:
@@ -45,13 +46,14 @@ class MonitorService:
             if not target or not target.enabled:
                 return
             address = target.address
+            revision = target.service_revision
 
         result = await ping_target(address)
         now = datetime.now(timezone.utc)
 
         with SessionLocal() as db:
             target = db.get(Target, target_id)
-            if not target:
+            if not target or not target.enabled or target.address != address or target.service_revision != revision:
                 return
 
             previous_status = target.status
@@ -76,7 +78,7 @@ class MonitorService:
             target.loss_percent = round(100 * (1 - (sum(window) / len(window))), 2) if window else 0.0
             target.status = self._status_for(target)
             target.updated_at = now
-            db.add(Sample(target_id=target.id, success=result.success, latency_ms=result.latency_ms))
+            db.add(Sample(target_id=target.id, address=address, success=result.success, latency_ms=result.latency_ms))
 
             if previous_status != target.status:
                 db.add(Event(
@@ -91,6 +93,13 @@ class MonitorService:
             db.commit()
             payload = {'type': 'target_health', 'target': self._serialize(target)}
 
+        if target.status in {'suspect', 'down', 'degraded'}:
+            diagnostics.request(target_id, f"ICMP {target.status}: loss {target.loss_percent:g}%, failures {target.consecutive_failures}")
+        elif target.status == 'healthy' and previous_status in {'suspect', 'down', 'degraded'}:
+            diagnostics.note_recovery(target_id, 'icmp')
+        with SessionLocal() as db:
+            current = db.get(Target, target_id)
+            payload['diagnostic'] = latest_diagnostic(db, current) if current else None
         await manager.broadcast(payload)
 
     @staticmethod
