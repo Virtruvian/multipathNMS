@@ -9,7 +9,8 @@ A lightweight live route and multipath NMS built around Paris-style MDA discover
 - **/settings** — manage monitored targets.
 
 Click a host name or address on **/nms** to open that host's topology directly.
-NMS host rows show ICMP health and compact RTT/loss/jitter/route figures; detailed
+NMS host rows show a status dot and compact RTT/loss/jitter/route figures without
+the ICMP status text; detailed
 TCP/HTTPS badges appear in topology. The NMS summary still counts confirmed service alerts.
 Topology opens in the **TCP** view with **Fit all** framing the full graph.
 ICMP, comparison and Readable view remain available; live updates retain manual zoom and pan.

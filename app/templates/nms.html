@@ -41,9 +41,6 @@
             <small>{{ target.address }}</small>
           </div>
         </a>
-        <div class="target-status">
-          <span>ICMP <span class="status-text">{{ target.status|upper if target.enabled else 'PAUSED' }}</span></span>
-        </div>
         <div class="target-stats">
           <span>RTT <b class="latency">{{ '%.1f'|format(target.latency_ms) if target.latency_ms is not none else '—' }}</b> ms</span>
           <span>Loss <b class="loss">{{ '%.1f'|format(target.loss_percent) }}</b>%</span>

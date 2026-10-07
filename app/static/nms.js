@@ -45,7 +45,6 @@ function updateTarget(target) {
   if (!card) return;
 
   card.dataset.status = target.enabled === false ? 'disabled' : target.status;
-  card.querySelector('.status-text').textContent = target.enabled === false ? 'PAUSED' : target.status.toUpperCase();
   card.querySelector('.latency').textContent = fmt(target.latency_ms);
   card.querySelector('.loss').textContent = fmt(target.loss_percent);
   card.querySelector('.jitter').textContent = fmt(target.jitter_ms);

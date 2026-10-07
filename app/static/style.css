@@ -72,7 +72,7 @@ h4{margin:20px 0 8px}
 }
 .targets{padding:10px;display:grid;gap:8px}
 .target-card{
-  display:grid;grid-template-columns:minmax(210px,1fr) 120px minmax(440px,1.4fr);
+  display:grid;grid-template-columns:minmax(210px,1fr) minmax(440px,1.4fr);
   align-items:center;gap:14px;padding:15px;background:#0a1520;
   border:1px solid #172839;border-radius:9px;transition:border-color .2s,box-shadow .2s;
 }
@@ -185,7 +185,7 @@ pre{
   padding:12px;border-bottom:1px solid var(--line);
 }
 @media(max-width:1050px){
-  .target-card{grid-template-columns:1fr 100px}
+  .target-card{grid-template-columns:1fr}
   .target-stats{grid-column:1/-1;justify-content:flex-start}
   .topology-layout{grid-template-columns:1fr}
 }
