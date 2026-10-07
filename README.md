@@ -24,6 +24,49 @@ Current partial paths remain visible. **Show recent history** overlays recent mi
 routes without mixing them into the default current-path view. Missing-route counts
 remain visible even while the history overlay is hidden.
 
+## Service reachability and route confirmation
+
+The NMS and topology views keep three independent results: ICMP host health,
+normal TCP connection reachability, and optional HTTPS response validation.
+Service checks have their own loop (30 seconds after each round, at most eight
+targets concurrently) so service timeouts never delay the fast ping loop.
+A TCP trace's SYN/ACK or reset does not replace the ordinary TCP connection check.
+
+In **Settings**, configure the TCP/HTTPS port, enable or disable the normal TCP
+check, and opt into HTTPS with a relative path such as `/health`. Existing targets
+get TCP checks enabled and HTTPS disabled. HTTPS uses the saved port, verifies the
+certificate and hostname against the system trust store, and checks the first final
+HTTP status: 200–399 is successful. Redirects are reported without being followed;
+response bodies are not downloaded. This tests that endpoint, not a complete login
+or application workflow. Service probes may use IPv4 or IPv6 according to host DNS;
+each result exposes the connected IP separately from IPv4 topology discovery.
+
+**Check services now** runs an immediate round from the topology view. The API is
+`POST /api/targets/{id}/check-services`. The normal round has a five-second total
+DNS/connection/TLS/response timeout. One or two consecutive failures are **VERIFYING**,
+with the failure count and reason visible. The third emits one service-failure event;
+subsequent failures do not repeat it. A successful check resets the streak and emits
+one recovery event if the service had a confirmed failure. Current states and every
+service sample are stored separately in SQLite. Failed HTTPS does not change TCP
+or ICMP health. Edited settings immediately invalidate the affected current state;
+old samples remain, and results from an older configuration revision are discarded.
+
+A successfully completed topology scan that omits a known path removes it from the
+current graph immediately but first records **pending**. The third consecutive
+completed scan that omits that path for the same destination IP and protocol/port
+confirms **missing** and emits one observation warning. An engine failure leaves
+that streak unchanged. Reappearance resets it; a transient omission emits no
+missing/recovery alarm pair. Missing still means *not observed*, not a proven outage.
+
+DNS changes are informational: old-IP routes become **previous target IP** history
+without counting as missed scans. Identical partial prefixes for different target
+IPs retain separate identities. Existing route IDs and hashes stay intact; legacy
+routes acquire their resolved IP from their confirmed endpoint or matching history.
+Pending and previous-IP history use neutral colours. The graph never fills gaps
+from previous scans. **Observed scans** is the fraction of scans in which a path
+appeared, not network uptime. API timestamps explicitly carry UTC and browser
+views display local times. The full historical timeline remains a future extension.
+
 ## Stack
 
 Docker → FastAPI → Voyage / Paris MDA + TCP SYN traceroute → WebSocket → Cytoscape.js → SQLite
@@ -35,7 +78,7 @@ Two measurement loops intentionally run at different speeds:
 - **Health loop** (default every 2 seconds): target RTT, loss, jitter and healthy/degraded/suspect/down.
 - **Topology loop** (default 60 seconds after each round completes): ICMP Voyage/Paris MDA discovery followed by bounded TCP SYN traces to the target's saved port (default 443).
 
-A route that was previously discovered but is absent from the newest MDA result is marked **missing** and retained in the recent-history view for a configurable window. Missing does not automatically prove that an intermediate router failed; it means that path is no longer being observed in the current topology.
+A route that was previously discovered but is absent from the newest MDA result is initially **pending**, then **missing** after three consecutive completed scans for the same resolved destination, and retained in the recent-history view for a configurable window. Missing does not automatically prove that an intermediate router failed; it means that path is no longer being observed in the current topology.
 
 ICMP topology probes use Voyage. The Docker build patches the pinned Voyage
 revision with an explicit single-target mode: multipath flows vary source ports
@@ -152,6 +195,10 @@ TCP_FLOWS=3
 TCP_FIXED_SOURCE_PORT=false
 TCP_HOP_TIMEOUT_SECONDS=1
 TCP_SENDWAIT_SECONDS=0.05
+SERVICE_INTERVAL_SECONDS=30
+SERVICE_TIMEOUT_SECONDS=5
+SERVICE_FAILURES_BEFORE_DOWN=3
+ROUTE_MISSING_AFTER_SCANS=3
 SUSPECT_AFTER_FAILURES=3
 DOWN_AFTER_FAILURES=5
 DEGRADED_LOSS_PERCENT=10

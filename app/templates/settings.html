@@ -8,6 +8,11 @@
     <form id="target-form" class="form-stack">
       <label>Name<input id="target-name" required maxlength="120" placeholder="Google DNS"></label>
       <label>Address<input id="target-address" required maxlength="255" placeholder="8.8.8.8 or host.example.org"></label>
+      <label>TCP / HTTPS port<input id="target-port" type="number" value="443" min="1" max="65535" required></label>
+      <label class="check-label"><input id="target-tcp-check" type="checkbox" checked>Check normal TCP connection</label>
+      <label class="check-label"><input id="target-https" type="checkbox">Check HTTPS with certificate verification</label>
+      <label>HTTPS path<input id="target-https-path" value="/" maxlength="1024" placeholder="/health" disabled></label>
+      <p class="detail-note">Service checks run separately from ICMP ping and traceroute. HTTPS uses the saved port and accepts HTTP 200–399; redirects are not followed.</p>
       <button type="submit">Add target</button>
       <div id="form-message" class="form-message"></div>
     </form>
@@ -18,6 +23,14 @@
       {% for target in targets %}
       <div class="settings-row" id="settings-target-{{ target.id }}">
         <div><strong>{{ target.name }}</strong><small>{{ target.address }}</small></div>
+        <form class="service-settings" data-id="{{ target.id }}">
+          <label><input name="enabled" type="checkbox" {% if target.enabled %}checked{% endif %}>Monitoring enabled</label>
+          <label>TCP / HTTPS port<input name="tcp_port" type="number" value="{{ target.tcp_port }}" min="1" max="65535" required></label>
+          <label><input name="tcp_check_enabled" type="checkbox" {% if target.tcp_check_enabled %}checked{% endif %}>Check normal TCP connection</label>
+          <label><input name="https_enabled" type="checkbox" {% if target.https_enabled %}checked{% endif %}>Check HTTPS with certificate verification</label>
+          <label>HTTPS path<input name="https_path" type="text" value="{{ target.https_path }}" maxlength="1024" {% if not target.https_enabled %}disabled{% endif %}></label>
+          <button type="submit">Save checks</button><span class="settings-message" role="status"></span>
+        </form>
         <button class="danger delete-target" data-id="{{ target.id }}">Delete</button>
       </div>
       {% else %}

@@ -45,6 +45,11 @@ Topology route status model:
 - `active`
 - `degraded`
 - `missing`
+- `pending` (not observed, awaiting confirmation)
+- `different-target` (history for a previous resolved DNS address)
+
+Service checks have independent `unknown`, `healthy`, `pending`, `down`, `disabled`
+and display-only `stale` states. Never replace ICMP target health with service status.
 
 ## Security
 
@@ -109,6 +114,13 @@ Topology route status model:
 - additive SQLite scope migration preserving all existing ICMP IDs and history
 - TCP SYN/ACK vs reset vs ICMP error distinction; target health remains ICMP-labelled
 - Docker CI executes the installed TCP engine against an open/closed loopback port
+- independent normal TCP-connect and opt-in verified HTTPS checks, with per-target settings
+- bounded service probes and three-failure confirmation with durable samples and state-change events
+- per-target revision guards discard service results raced with edits, pause/resume or deletion
+- three completed same-destination scans confirm absence; engine errors and DNS rotations do not count as disappeared routes
+- additive schema upgrades retain samples, route IDs, hashes and historical events
+- API timestamps explicitly carry UTC because SQLite omits timezone metadata
+- service checks and route confirmation are exposed in both NMS and topology views
 
 ## Next implementation step
 

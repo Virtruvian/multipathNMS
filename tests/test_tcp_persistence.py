@@ -63,7 +63,7 @@ class TcpPersistenceTests(unittest.TestCase):
         self.persist('tcp', 443, TopologyObservation((), (), (), 0))
         with self.sessions() as db:
             routes = {(r.protocol, r.destination_port): r for r in db.scalars(select(RoutePath))}
-            self.assertEqual('missing', routes['tcp', 443].status)
+            self.assertEqual('pending', routes['tcp', 443].status)
             self.assertTrue(routes['icmp', 0].active)
             self.assertTrue(routes['tcp', 80].active)
             self.assertEqual(1, routes['tcp', 443].miss_count)
@@ -144,5 +144,6 @@ class DatabaseMigrationTests(unittest.TestCase):
                              tuple(connection.exec_driver_sql('SELECT id,path_hash,protocol,destination_port FROM route_paths').one()))
             self.assertEqual((11, 'icmp', 0),
                              tuple(connection.exec_driver_sql('SELECT id,protocol,destination_port FROM topology_snapshots').one()))
-            self.assertEqual((7, 'original', 443), tuple(connection.exec_driver_sql('SELECT * FROM targets').one()))
+            self.assertEqual((7, 'original', 443, 1, 0, '/', 0), tuple(connection.exec_driver_sql('SELECT * FROM targets').one()))
+            self.assertEqual((0, None), tuple(connection.exec_driver_sql('SELECT consecutive_misses,resolved_ip FROM route_paths').one()))
         engine.dispose()

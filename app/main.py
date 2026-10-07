@@ -13,9 +13,11 @@ from sqlalchemy import desc, select
 
 from .database import SessionLocal, init_db
 from .config import settings
-from .models import Event, Target
+from .models import Event, Target, ServiceState, iso_utc
 from .services.monitor import MonitorService, monitor
 from .services.topology import topology, topology_payload
+from .services.services import services, service_payload, service_config, service_enabled
+from .services.service_health import validate_https_path
 from .websocket import manager
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,6 +45,14 @@ class TargetCreate(BaseModel):
     address: str = Field(min_length=1, max_length=255)
     enabled: bool = True
     tcp_port: int = Field(default=settings.tcp_port, ge=1, le=65535)
+    tcp_check_enabled: bool = True
+    https_enabled: bool = False
+    https_path: str = Field(default="/", min_length=1, max_length=1024)
+
+    @field_validator("https_path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return validate_https_path(value)
 
     @field_validator("address")
     @classmethod
@@ -55,15 +65,32 @@ class TargetUpdate(BaseModel):
     address: str | None = Field(default=None, min_length=1, max_length=255)
     enabled: bool | None = None
     tcp_port: int = Field(default=settings.tcp_port, ge=1, le=65535)
+    tcp_check_enabled: bool = True
+    https_enabled: bool = False
+    https_path: str = Field(default="/", min_length=1, max_length=1024)
+
+    @field_validator("https_path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return validate_https_path(value)
 
     @field_validator("address")
     @classmethod
     def validate_address(cls, value: str | None) -> str | None:
-        return validate_target_address(value) if value is not None else None
+        if value is None:
+            raise ValueError("Address cannot be null")
+        return validate_target_address(value)
+
+    @field_validator("name", "enabled")
+    @classmethod
+    def reject_null(cls, value):
+        if value is None:
+            raise ValueError("Provided values cannot be null")
+        return value
 
 
-def serialize_target(target: Target) -> dict:
-    return MonitorService._serialize(target)
+def serialize_target(target: Target, db) -> dict:
+    return dict(MonitorService._serialize(target), service_checks=service_payload(db, target))
 
 
 @asynccontextmanager
@@ -71,14 +98,17 @@ async def lifespan(app: FastAPI):
     init_db()
     monitor.start()
     topology.start()
+    services.start()
     yield
     await topology.stop()
+    await services.stop()
     await monitor.stop()
 
 
-app = FastAPI(title="multipathNMS", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="multipathNMS", version="0.3.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates.env.globals["utc_iso"] = iso_utc
 
 
 @app.get("/", include_in_schema=False)
@@ -103,7 +133,9 @@ def nms_page(request: Request):
             )
         )
         route_summaries: dict[int, dict] = {}
+        service_checks: dict[int, list] = {}
         for target in targets:
+            service_checks[target.id] = service_payload(db, target)
             route_summaries[target.id] = topology_payload(
                 db,
                 target.id,
@@ -116,6 +148,7 @@ def nms_page(request: Request):
             "targets": targets,
             "events": events,
             "route_summaries": route_summaries,
+            "service_checks": service_checks,
         },
     )
 
@@ -150,7 +183,7 @@ def settings_page(request: Request):
 def get_targets() -> list[dict]:
     with SessionLocal() as db:
         return [
-            serialize_target(target)
+            serialize_target(target, db)
             for target in db.scalars(
                 select(Target).order_by(Target.name)
             )
@@ -174,15 +207,18 @@ def create_target(payload: TargetCreate) -> dict:
             address=payload.address,
             enabled=payload.enabled,
             tcp_port=payload.tcp_port,
+            tcp_check_enabled=payload.tcp_check_enabled,
+            https_enabled=payload.https_enabled,
+            https_path=payload.https_path,
         )
         db.add(target)
         db.commit()
         db.refresh(target)
-        return serialize_target(target)
+        return serialize_target(target, db)
 
 
 @app.patch("/api/targets/{target_id}")
-def update_target(
+async def update_target(
     target_id: int,
     payload: TargetUpdate,
 ) -> dict:
@@ -193,13 +229,26 @@ def update_target(
                 status_code=404,
                 detail="Target not found",
             )
+        previous = {method: (service_config(target, method), service_enabled(target, method)) for method in ("tcp", "https")}
         for field, value in payload.model_dump(
             exclude_unset=True
         ).items():
             setattr(target, field, value)
+        changed = False
+        for method, old in previous.items():
+            if old != (service_config(target, method), service_enabled(target, method)):
+                changed = True
+                state = db.scalar(select(ServiceState).where(ServiceState.target_id == target_id, ServiceState.method == method))
+                if state:
+                    db.delete(state)
+        if changed:
+            target.service_revision += 1
         db.commit()
         db.refresh(target)
-        return serialize_target(target)
+        result = serialize_target(target, db)
+    await manager.broadcast({"type": "target_health", "target": result})
+    await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": result["service_checks"]})
+    return result
 
 
 @app.delete("/api/targets/{target_id}", status_code=204)
@@ -214,6 +263,19 @@ def delete_target(target_id: int) -> Response:
         db.delete(target)
         db.commit()
     return Response(status_code=204)
+
+
+@app.post("/api/targets/{target_id}/check-services")
+async def check_target_services(target_id: int) -> dict:
+    with SessionLocal() as db:
+        if not db.get(Target, target_id):
+            raise HTTPException(status_code=404, detail="Target not found")
+    await services.check_target(target_id)
+    with SessionLocal() as db:
+        target = db.get(Target, target_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Target not found")
+        return serialize_target(target, db)
 
 
 @app.get("/api/events")
@@ -231,7 +293,7 @@ def get_events(limit: int = 50) -> list[dict]:
             {
                 "id": event.id,
                 "target_id": event.target_id,
-                "created_at": event.created_at.isoformat(),
+                "created_at": iso_utc(event.created_at),
                 "severity": event.severity,
                 "event_type": event.event_type,
                 "message": event.message,

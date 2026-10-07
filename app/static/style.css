@@ -116,7 +116,7 @@ button{cursor:pointer;background:#123443;border-color:#256277;font-weight:700}
 button:hover{background:#17485a}
 button:disabled{opacity:.5}
 .danger{background:#3b1b20;border-color:#6b2933;color:#fecaca}
-.topology-summary{grid-template-columns:repeat(5,minmax(130px,1fr))}
+.topology-summary{grid-template-columns:repeat(6,minmax(130px,1fr))}
 .topology-layout{
   display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;min-height:800px;
 }
@@ -214,3 +214,25 @@ pre{
 .measurement-card small { display: block; color: #9bb3c8; margin-top: 5px; }
 .measurement-card .measurement-error { color: #fbbf24; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .measurement-comparison { grid-template-columns: 1fr; } }
+
+.service-panel{padding:14px 16px;margin-bottom:18px}
+.service-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px}
+.service-checks{display:flex;flex-wrap:wrap;gap:10px}
+.service-check{flex:1 1 180px;border-left:3px solid #64748b;background:#0a1520;padding:8px 12px;min-width:0}
+.service-check strong{font-size:13px;display:block}
+.service-check small{display:block;color:var(--muted);margin-top:5px;overflow-wrap:anywhere}
+.service-healthy{border-color:var(--green)}
+.service-down{border-color:var(--red);color:var(--red)}
+.service-pending,.service-degraded,.service-suspect{border-color:var(--yellow);color:var(--yellow)}
+.target-card>.service-checks{grid-column:1/-1}
+.route-card.route-pending,.route-card.route-different-target{border-color:#64748b;box-shadow:inset 3px 0 0 #64748b}
+.route-pending .route-state,.route-different-target .route-state{color:#94a3b8}
+.settings-row{flex-wrap:wrap}
+.service-settings{display:grid;gap:10px;width:100%;margin-top:12px}
+.service-settings label,.check-label{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.service-settings input[type=checkbox],.check-label input[type=checkbox]{width:auto}
+.service-settings input[type=number]{width:100px}
+.service-settings input[type=text]{min-width:150px;flex:1}
+.settings-message{color:var(--muted);overflow-wrap:anywhere}
+
+.form-stack .check-label{display:flex;align-items:center;gap:10px}

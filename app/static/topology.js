@@ -5,6 +5,7 @@ const routeList = document.getElementById('route-list');
 const rawOutput = document.getElementById('voyage-output');
 const methodSelect = document.getElementById('trace-method');
 const tcpPortInput = document.getElementById('tcp-port');
+const checkServicesButton = document.getElementById('check-services-btn');
 let tcpPortDirty = false;
 
 let currentTopology = null;
@@ -105,6 +106,12 @@ const cy = typeof cytoscape === 'function' ? cytoscape({
     }},
     {selector: 'node.path-node[role = "source"], node.path-node[role = "destination"]', style: {
       'shape': 'round-rectangle', 'width': 34, 'height': 30
+    }},
+    {selector: 'node[status = "pending"], node[status = "different-target"]', style: {
+      'border-color': '#94a3b8', 'color': '#94a3b8'
+    }},
+    {selector: 'edge[status = "pending"], edge[status = "different-target"]', style: {
+      'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8', 'line-style': 'dashed', 'color': '#94a3b8'
     }}
   ]
 }) : null;
@@ -153,6 +160,7 @@ function renderSummary(summary) {
   document.getElementById('topology-active').textContent = String(summary.active_routes || 0);
   document.getElementById('topology-degraded').textContent = String(summary.degraded_routes || 0);
   document.getElementById('topology-missing').textContent = String(summary.missing_routes || 0);
+  document.getElementById('topology-pending').textContent = String(summary.pending_routes || 0);
   document.getElementById('topology-replies').textContent = String(summary.probe_replies || 0);
   document.getElementById('topology-last-scan').textContent = localTime(summary.last_scan);
 }
@@ -160,6 +168,34 @@ function renderSummary(summary) {
 function methodName(route) {
   return route.protocol === 'tcp' ? 'TCP:' + route.destination_port : 'ICMP';
 }
+
+function renderServiceChecks(data) {
+  ServiceHealth.render(document.getElementById('service-checks'), [{method: 'icmp',
+    status: data.target.enabled === false ? 'disabled' : data.target.status || 'unknown', latency_ms: data.target.latency_ms,
+    last_checked: data.target.updated_at, enabled: data.target.enabled !== false}, ...(data.service_checks || [])]);
+}
+
+checkServicesButton.addEventListener('click', async () => {
+  const targetId = select.value;
+  if (!targetId) return;
+  checkServicesButton.disabled = true;
+  checkServicesButton.textContent = 'Checking…';
+  try {
+    const response = await fetch('/api/targets/' + targetId + '/check-services', {method: 'POST'});
+    const target = await response.json();
+    if (!response.ok) throw new Error(target.detail || 'Service check failed');
+    if (currentTopology && select.value === targetId) {
+      currentTopology.service_checks = target.service_checks;
+      currentTopology.target = {...currentTopology.target, ...target};
+      renderServiceChecks(currentTopology);
+    }
+  } catch (error) {
+    if (select.value === targetId) rawOutput.textContent = String(error);
+  } finally {
+    checkServicesButton.disabled = false;
+    checkServicesButton.textContent = 'Check services now';
+  }
+});
 
 function renderMeasurements(data) {
   const panel = document.getElementById('measurement-comparison');
@@ -290,15 +326,20 @@ function showRouteDetails(route) {
     ['Method', methodName(route)],
     ['Endpoint reply', route.endpoint_response || (route.complete ? 'ICMP reply' : 'No target reply')],
     ['Status', String(route.status || 'unknown').toUpperCase()],
-    ['Current RTT', fmt(route.destination_rtt_ms) + ' ms'],
+    ['Measured destination', route.resolved_ip || '—'],
+    ['Absent scans', String(route.consecutive_misses || 0) + ' / ' + (route.missing_confirmation_threshold || 3)],
+    [route.active ? 'Current RTT' : 'Last observed RTT', fmt(route.destination_rtt_ms) + ' ms'],
     ['Baseline', fmt(route.baseline_rtt_ms) + ' ms'],
     ['Average RTT', fmt(route.average_rtt_ms) + ' ms'],
     ['Min / Max', fmt(route.minimum_rtt_ms) + ' / ' + fmt(route.maximum_rtt_ms) + ' ms'],
-    ['Availability', fmt(route.availability_percent, 2) + '%'],
+    ['Observed scans', fmt(route.availability_percent, 2) + '%'],
     ['Hops', String(route.hop_count || 0)],
     [route.protocol === 'tcp' ? 'Trace samples' : 'Flows', String(route.flow_count || 0)],
     ['Last seen', localTime(route.last_seen)]
-  ], route.complete
+  ], !route.active
+    ? route.status === 'different-target' ? 'Saved observation for a previous destination IP. It does not indicate failure of the current destination.'
+      : 'This path was not observed in ' + (route.consecutive_misses || 0) + ' completed scans. RTT and endpoint replies belong to the last saved observation; absence does not establish an outage.'
+    : route.complete
     ? route.endpoint_response === 'reset' ? 'A TCP reset reached the probe. The endpoint replied; this does not establish an open service.' : 'The target replied on this measured path.'
     : 'Path is incomplete. Silent or filtered hops do not establish a router outage.');
 
@@ -341,17 +382,18 @@ function renderRoutes(routes) {
 
     const status = document.createElement('span');
     status.className = 'route-state';
-    status.textContent = String(route.status || 'unknown').toUpperCase();
+    status.textContent = route.status === 'pending' ? 'NOT OBSERVED · ' + route.consecutive_misses + '/' + route.missing_confirmation_threshold
+      : route.status === 'missing' ? 'CONFIRMED ABSENT' : route.status === 'different-target' ? 'PREVIOUS TARGET IP' : String(route.status || 'unknown').toUpperCase();
     header.append(name, status);
 
     const values = document.createElement('div');
     values.className = 'route-card-values';
-    values.textContent = 'RTT ' + fmt(route.destination_rtt_ms)
+    values.textContent = (route.active ? 'RTT ' : 'Last RTT ') + fmt(route.destination_rtt_ms)
       + ' ms · avg ' + fmt(route.average_rtt_ms)
-      + ' ms · ' + (route.hop_count || 0) + ' hops · ' + (route.complete ? 'target reached' : 'partial path');
+      + ' ms · ' + (route.hop_count || 0) + ' hops · ' + (route.complete ? route.active ? 'target reached' : 'target replied in saved scan' : 'partial path');
 
     const meta = document.createElement('small');
-    meta.textContent = 'availability ' + fmt(route.availability_percent, 2)
+    meta.textContent = 'observed scans ' + fmt(route.availability_percent, 2)
       + '% · last seen ' + localTime(route.last_seen);
 
     button.append(header, values, meta);
@@ -381,12 +423,14 @@ function renderTopology(data) {
   currentTopology = data;
   if (!tcpPortDirty) tcpPortInput.value = data.target.tcp_port || 443;
   renderMeasurements(data);
+  renderServiceChecks(data);
   const visibleRoutes = (data.routes || []).filter(route => methodSelect.value === 'all' || (route.protocol || 'icmp') === methodSelect.value);
   const measurements = (data.measurements || []).filter(item => methodSelect.value === 'all' || item.protocol === methodSelect.value);
   renderSummary({...data.summary,
     active_routes: visibleRoutes.filter(route => route.active).length,
     degraded_routes: visibleRoutes.filter(route => route.status === 'degraded').length,
     missing_routes: visibleRoutes.filter(route => route.status === 'missing').length,
+    pending_routes: visibleRoutes.filter(route => route.status === 'pending').length,
     ...(data.measurements ? {
       probe_replies: measurements.reduce((total, item) => total + item.probe_replies, 0),
       last_scan: measurements.map(item => item.last_scan).filter(Boolean).sort().at(-1)
@@ -404,7 +448,7 @@ function renderTopology(data) {
     (methodSelect.value === 'all' ? 'ICMP + TCP' : methodSelect.value.toUpperCase())
     + ' · ' + (showHistory ? 'Current + recent paths' : 'Latest measured paths')
     + ' · ' + (showHistory ? visibleRoutes.filter(route => !route.active).length : currentGraph.hiddenMissingCount)
-    + (showHistory ? ' recent missing paths shown' : ' recent missing paths retained in history')
+    + (showHistory ? ' historical paths shown' : ' historical paths retained')
     + ' · ' + currentGraph.looseReplyCount + (showLooseReplies ? ' replies outside visible paths' : ' loose replies hidden')
     + (currentGraph.excludedRouteCount ? ' · ' + currentGraph.excludedRouteCount + ' paths outside probe range excluded' : '');
 
@@ -428,7 +472,7 @@ function renderTopology(data) {
   const empty = document.getElementById('graph-empty');
   empty.hidden = currentGraph.elements.some(item => item.group === 'nodes' && item.data.id !== 'probe');
   empty.textContent = currentGraph.hiddenMissingCount
-    ? 'No current paths. Use Show recent history to inspect the missing paths.'
+    ? 'No current paths. Use Show recent history to inspect previous observations.'
     : 'Waiting for topology discovery. Use Discover now to find the first paths.';
 }
 
@@ -504,6 +548,10 @@ discoverButton.addEventListener('click', async () => {
 });
 
 window.addEventListener('multipath-live', event => {
+  if (event.detail.type === 'service_health' && currentTopology && String(event.detail.target_id) === select.value) {
+    currentTopology.service_checks = event.detail.service_checks;
+    renderServiceChecks(currentTopology);
+  }
   if (
     event.detail.type === 'topology_update'
     && String(event.detail.target_id) === select.value
@@ -517,6 +565,7 @@ window.addEventListener('multipath-live', event => {
     && String(event.detail.target.id) === select.value
   ) {
     currentTopology.target = Object.assign({}, currentTopology.target, event.detail.target);
+    renderServiceChecks(currentTopology);
     if (detailSelection.kind === 'target') showTargetDetails();
   }
 });

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import Event, Sample, Target
+from ..models import Event, Sample, Target, iso_utc
 from ..websocket import manager
 from .health import RollingStats, ping_target
 
@@ -114,14 +114,17 @@ class MonitorService:
             'address': target.address,
             'enabled': target.enabled,
             'tcp_port': target.tcp_port,
+            'tcp_check_enabled': target.tcp_check_enabled,
+            'https_enabled': target.https_enabled,
+            'https_path': target.https_path,
             'status': target.status,
             'latency_ms': target.latency_ms,
             'loss_percent': target.loss_percent,
             'jitter_ms': target.jitter_ms,
             'baseline_latency_ms': target.baseline_latency_ms,
             'consecutive_failures': target.consecutive_failures,
-            'last_seen': target.last_seen.isoformat() if target.last_seen else None,
-            'updated_at': target.updated_at.isoformat() if target.updated_at else None,
+            'last_seen': iso_utc(target.last_seen) if target.last_seen else None,
+            'updated_at': iso_utc(target.updated_at) if target.updated_at else None,
         }
 
 

@@ -25,7 +25,13 @@ def init_db() -> None:
 def migrate_probe_scopes(bind) -> None:
     """Add probe metadata to existing SQLite databases, retaining IDs/history."""
     additions = {
-        "targets": {"tcp_port": f"INTEGER NOT NULL DEFAULT {settings.tcp_port}"},
+        "targets": {
+            "tcp_port": f"INTEGER NOT NULL DEFAULT {settings.tcp_port}",
+            "tcp_check_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+            "https_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+            "https_path": "VARCHAR(1024) NOT NULL DEFAULT '/'",
+            "service_revision": "INTEGER NOT NULL DEFAULT 0",
+        },
         "topology_snapshots": {
             "protocol": "VARCHAR(8) NOT NULL DEFAULT 'icmp'",
             "destination_port": "INTEGER NOT NULL DEFAULT 0",
@@ -34,6 +40,8 @@ def migrate_probe_scopes(bind) -> None:
             "protocol": "VARCHAR(8) NOT NULL DEFAULT 'icmp'",
             "destination_port": "INTEGER NOT NULL DEFAULT 0",
             "endpoint_response": "VARCHAR(40)",
+            "consecutive_misses": "INTEGER NOT NULL DEFAULT 0",
+            "resolved_ip": "VARCHAR(64)",
         },
     }
     with bind.begin() as connection:

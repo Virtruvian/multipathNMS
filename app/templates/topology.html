@@ -32,9 +32,16 @@
 <section class="summary topology-summary">
   <div class="metric"><span>Active routes</span><strong id="topology-active">0</strong></div>
   <div class="metric"><span>Degraded</span><strong id="topology-degraded">0</strong></div>
-  <div class="metric"><span>Missing</span><strong id="topology-missing">0</strong></div>
+  <div class="metric"><span>Confirmed absent</span><strong id="topology-missing">0</strong></div>
+  <div class="metric"><span>Awaiting confirmation</span><strong id="topology-pending">0</strong></div>
   <div class="metric"><span>Probe replies</span><strong id="topology-replies">0</strong></div>
   <div class="metric metric-wide"><span>Last scan</span><strong id="topology-last-scan">—</strong></div>
+</section>
+
+<section class="panel service-panel" aria-label="Service reachability">
+  <div class="service-heading"><strong>Service reachability</strong><button id="check-services-btn" type="button">Check services now</button></div>
+  <div id="service-checks" class="service-checks"></div>
+  <p class="detail-note">TCP checks a normal connection. HTTPS verifies TLS and accepts HTTP 200–399 without following redirects. Route absence does not establish a service outage.</p>
 </section>
 
 <section class="panel measurement-panel" aria-label="Measurement comparison">
@@ -48,7 +55,8 @@
       <span><i class="legend-dot legend-active"></i>ICMP current</span>
       <span><i class="legend-dot legend-tcp"></i>TCP sampled hop order</span>
       <span><i class="legend-dot legend-degraded"></i>Degraded route</span>
-      <span><i class="legend-dot legend-missing"></i>Missing/recent</span>
+      <span><i class="legend-dot legend-missing"></i>Confirmed absent</span>
+      <span><i class="legend-gap"></i>Pending / previous target IP</span>
       <span><i class="legend-gap"></i>Unobserved hops</span>
     </div>
     <div class="graph-controls" aria-label="Topology controls">
@@ -90,6 +98,7 @@
 </section>
 {% endblock %}
 {% block scripts %}
+<script src="/static/service-health.js"></script>
 <script src="/static/network-graph.js"></script>
 <script src="/static/topology.js"></script>
 {% endblock %}

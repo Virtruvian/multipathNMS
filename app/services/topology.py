@@ -17,11 +17,13 @@ from ..models import (
     TopologyNode,
     TopologySnapshot,
     TopologyProbeState,
+    iso_utc,
 )
 from ..websocket import manager
 from .topology_parser import TopologyObservation, parse_voyage_flat
 from .voyage import run_voyage, resolve_target
 from .tcp import run_tcp_trace, parse_tcp_traces
+from .services import service_payload
 
 
 def route_label(index: int) -> str:
@@ -193,6 +195,15 @@ class TopologyService:
             if not target:
                 return
 
+            previous_snapshot = db.scalar(select(TopologySnapshot).where(
+                TopologySnapshot.target_id == target_id, TopologySnapshot.protocol == protocol,
+                TopologySnapshot.destination_port == destination_port,
+            ).order_by(desc(TopologySnapshot.id)).limit(1))
+            previous_ip = previous_snapshot.resolved_ip if previous_snapshot else resolved_ip
+            if previous_snapshot and previous_ip != resolved_ip:
+                db.add(Event(target_id=target_id, severity="info", event_type="topology_target_changed",
+                             message=f"{target.name} {protocol.upper()}: DNS target changed {previous_ip} -> {resolved_ip}; previous-IP paths retained as history"))
+
             db.add(
                 TopologySnapshot(
                     target_id=target_id,
@@ -299,12 +310,27 @@ class TopologyService:
                 or 0
             ) + 1
             seen_hashes: set[str] = set()
+            for stored in existing_paths.values():
+                if stored.resolved_ip is None:
+                    if stored.complete and stored.hops and stored.hops[-1].address:
+                        stored.resolved_ip = stored.hops[-1].address
+                    else:
+                        historical = db.scalar(select(TopologySnapshot).where(
+                            TopologySnapshot.target_id == target_id, TopologySnapshot.protocol == protocol,
+                            TopologySnapshot.destination_port == destination_port,
+                            TopologySnapshot.created_at <= stored.last_seen,
+                        ).order_by(desc(TopologySnapshot.created_at), desc(TopologySnapshot.id)).limit(1))
+                        stored.resolved_ip = historical.resolved_ip if historical else previous_ip
 
             for item in observation.paths:
                 # Preserve old ICMP hashes; include TCP protocol/port in the stable path identity.
                 path_hash = item.path_hash if protocol == "icmp" else hashlib.sha256(
                     f"{protocol}:{destination_port}:{item.path_hash}".encode()
                 ).hexdigest()[:20]
+                # Partial paths may have the same prefix for different DNS endpoints.
+                existing = existing_paths.get(path_hash)
+                if existing and existing.resolved_ip != resolved_ip:
+                    path_hash = hashlib.sha256(f"{path_hash}@{resolved_ip}".encode()).hexdigest()[:20]
                 seen_hashes.add(path_hash)
                 route = existing_paths.get(path_hash)
                 is_new = route is None
@@ -327,6 +353,8 @@ class TopologyService:
                     existing_paths[path_hash] = route
 
                 route.active = True
+                route.resolved_ip = resolved_ip
+                route.consecutive_misses = 0
                 route.complete = item.complete
                 route.endpoint_response = item.endpoint_response
                 route.hop_count = len(item.hops)
@@ -440,11 +468,17 @@ class TopologyService:
                     continue
                 if path_hash in seen_hashes:
                     continue
-                was_active = route.active
+                if route.resolved_ip != resolved_ip:
+                    route.active = False
+                    route.status = "different-target"
+                    route.consecutive_misses = 0
+                    continue
+                previous_status = route.status
                 route.active = False
                 route.miss_count += 1
-                route.status = "missing"
-                if was_active:
+                route.consecutive_misses += 1
+                route.status = "missing" if route.consecutive_misses >= settings.route_missing_after_scans else "pending"
+                if route.status == "missing" and previous_status != "missing":
                     route.last_change = now
                     db.add(
                         Event(
@@ -452,8 +486,7 @@ class TopologyService:
                             severity="warning",
                             event_type="route_missing",
                             message=(
-                                f"{scoped_route_label(route)} disappeared "
-                                "from the current topology"
+                                f"{scoped_route_label(route)} not observed in {route.consecutive_misses} consecutive completed scans for {resolved_ip}; this does not prove a route outage"
                             ),
                         )
                     )
@@ -584,7 +617,7 @@ def topology_payload(db, target_id: int) -> dict:
             "average_rtt_ms": node.average_rtt_ms,
             "samples": node.sample_count,
             "active": node.active,
-            "last_seen": node.last_seen.isoformat(),
+            "last_seen": iso_utc(node.last_seen),
         }
         for node in nodes
     )
@@ -597,7 +630,7 @@ def topology_payload(db, target_id: int) -> dict:
             "target": f"node-{edge.destination_node_id}",
             "active": edge.active,
             "samples": edge.sample_count,
-            "last_seen": edge.last_seen.isoformat(),
+            "last_seen": iso_utc(edge.last_seen),
         }
         for edge in edges
     ]
@@ -614,7 +647,7 @@ def topology_payload(db, target_id: int) -> dict:
                         "target": f"node-{node.id}",
                         "active": True,
                         "samples": 0,
-                        "last_seen": node.last_seen.isoformat(),
+                        "last_seen": iso_utc(node.last_seen),
                     }
                 )
 
@@ -654,6 +687,9 @@ def topology_payload(db, target_id: int) -> dict:
                 "label": scoped_route_label(route),
                 "protocol": route.protocol,
                 "destination_port": route.destination_port,
+                "resolved_ip": route.resolved_ip,
+                "consecutive_misses": route.consecutive_misses,
+                "missing_confirmation_threshold": settings.route_missing_after_scans,
                 "endpoint_response": route.endpoint_response,
                 "path_hash": route.path_hash,
                 "active": route.active,
@@ -667,9 +703,9 @@ def topology_payload(db, target_id: int) -> dict:
                 "average_rtt_ms": route.average_rtt_ms,
                 "maximum_rtt_ms": route.maximum_rtt_ms,
                 "availability_percent": availability,
-                "first_seen": route.first_seen.isoformat(),
-                "last_seen": route.last_seen.isoformat(),
-                "last_change": route.last_change.isoformat(),
+                "first_seen": iso_utc(route.first_seen),
+                "last_seen": iso_utc(route.last_seen),
+                "last_change": iso_utc(route.last_change),
                 "node_path": node_path,
                 "hops": hops,
             }
@@ -714,13 +750,15 @@ def topology_payload(db, target_id: int) -> dict:
         measurements.append({
             "protocol": protocol, "destination_port": port,
             "engine": "Voyage / Paris MDA" if protocol == "icmp" else "TCP SYN / sampled traces",
-            "last_scan": snapshot.created_at.isoformat() if snapshot else None,
-            "last_attempt": state.last_attempt.isoformat() if state else None,
+            "last_scan": iso_utc(snapshot.created_at) if snapshot else None,
+            "last_attempt": iso_utc(state.last_attempt) if state else None,
             "error": state.error if state else None,
             "probe_replies": snapshot.probe_count if snapshot else 0,
             "active_routes": sum(route["active"] for route in scoped_routes),
             "complete_routes": sum(route["active"] and route["complete"] for route in scoped_routes),
-            "missing_routes": sum(not route["active"] for route in scoped_routes),
+            "missing_routes": sum(route["status"] == "missing" for route in scoped_routes),
+            "pending_routes": sum(route["status"] == "pending" for route in scoped_routes),
+            "resolved_ip": snapshot.resolved_ip if snapshot else None,
         })
 
     return {
@@ -733,8 +771,11 @@ def topology_payload(db, target_id: int) -> dict:
             "latency_ms": target.latency_ms,
             "loss_percent": target.loss_percent,
             "jitter_ms": target.jitter_ms,
+            "enabled": target.enabled,
+            "updated_at": iso_utc(target.updated_at),
         },
         "resolved_ip": latest_snapshot.resolved_ip if latest_snapshot else None,
+        "service_checks": service_payload(db, target),
         "max_ttl": settings.voyage_max_ttl,
         "summary": {
             "active_routes": sum(route.active for route in routes),
@@ -744,12 +785,13 @@ def topology_payload(db, target_id: int) -> dict:
             "missing_routes": sum(
                 route.status == "missing" for route in routes
             ),
+            "pending_routes": sum(route.status == "pending" for route in routes),
             "excluded_routes": excluded_routes,
             "nodes": len(graph_nodes) - 1,
             "edges": len(graph_edges),
             "probe_replies": sum(measurement["probe_replies"] for measurement in measurements),
             "last_scan": (
-                latest_snapshot.created_at.isoformat()
+                iso_utc(latest_snapshot.created_at)
                 if latest_snapshot
                 else None
             ),

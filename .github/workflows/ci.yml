@@ -23,6 +23,9 @@ jobs:
         run: |
           node --check app/static/network-graph.js
           node --check app/static/topology.js
+          node --check app/static/service-health.js
+          node --check app/static/nms.js
+          node --check app/static/settings.js
           node --test tests/test_network_graph.js
 
   python:
@@ -92,6 +95,42 @@ jobs:
                       print(f"TCP:{port}: {expected}, fixed_source={fixed}, {len(result.traces)} traces parsed")
 
           asyncio.run(check())
+          PY
+
+      - name: Service API smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import json
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+
+          def request(path, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
+                                   headers={"Content-Type": "application/json"}, method=method), timeout=15) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw and response.headers.get("Content-Type", "").startswith("application/json") else raw
+
+          target = request("/api/targets", "POST", {"name":"Service CI", "address":"127.0.0.1", "tcp_port":8080})
+          path = f"/api/targets/{target['id']}"
+          checks = request(path + "/check-services", "POST")["service_checks"]
+          assert checks[0]["status"] == "healthy" and checks[1]["status"] == "disabled", checks
+          current = request(path, "PATCH", {"tcp_port":8081})
+          assert current["service_checks"][0]["status"] == "unknown", current
+          for expected in ("pending", "pending", "down"):
+              checks = request(path + "/check-services", "POST")["service_checks"]
+              assert checks[0]["status"] == expected, checks
+          request(path, "PATCH", {"tcp_port":8080})
+          assert request(path + "/check-services", "POST")["service_checks"][0]["status"] == "healthy"
+          try:
+              request(path, "PATCH", {"https_path":"//elsewhere.invalid/"})
+              raise AssertionError("Invalid HTTPS path accepted")
+          except HTTPError as error:
+              assert error.code == 422, error
+          for page in ("/nms", "/settings", "/topology"):
+              assert b"Service" in request(page) or page == "/settings"
+          request(path, "DELETE")
+          print("Service API: TCP connect/refusal, three-check confirmation, config reset, validation and all pages passed")
           PY
 
       - name: Container logs

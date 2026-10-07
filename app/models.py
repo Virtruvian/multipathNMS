@@ -11,6 +11,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def iso_utc(value: datetime | None) -> str | None:
+    # SQLite drops timezone metadata; stored timestamps are always UTC.
+    if value is None:
+        return None
+    aware = value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return aware.isoformat()
+
+
 class Target(Base):
     __tablename__ = "targets"
 
@@ -19,6 +27,10 @@ class Target(Base):
     address: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tcp_port: Mapped[int] = mapped_column(Integer, default=lambda: settings.tcp_port)
+    tcp_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    https_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    https_path: Mapped[str] = mapped_column(String(1024), default="/")
+    service_revision: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="unknown")
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -45,6 +57,8 @@ class Target(Base):
     probe_states: Mapped[list["TopologyProbeState"]] = relationship(
         back_populates="target", cascade="all, delete-orphan"
     )
+    service_states: Mapped[list["ServiceState"]] = relationship(back_populates="target", cascade="all, delete-orphan")
+    service_samples: Mapped[list["ServiceSample"]] = relationship(back_populates="target", cascade="all, delete-orphan")
 
 
 class Sample(Base):
@@ -151,6 +165,8 @@ class RoutePath(Base):
     rtt_sample_count: Mapped[int] = mapped_column(Integer, default=0)
     seen_count: Mapped[int] = mapped_column(Integer, default=0)
     miss_count: Mapped[int] = mapped_column(Integer, default=0)
+    consecutive_misses: Mapped[int] = mapped_column(Integer, default=0)
+    resolved_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     last_change: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -189,3 +205,42 @@ class TopologyProbeState(Base):
     last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     target: Mapped[Target] = relationship(back_populates="probe_states")
+
+
+class ServiceState(Base):
+    __tablename__ = "service_states"
+    __table_args__ = (UniqueConstraint("target_id", "method"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    address: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(String(1024), default="")
+    status: Mapped[str] = mapped_column(String(20), default="unknown")
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolved_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target: Mapped[Target] = relationship(back_populates="service_states")
+
+
+class ServiceSample(Base):
+    __tablename__ = "service_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    address: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(String(1024), default="")
+    success: Mapped[bool] = mapped_column(Boolean)
+    latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolved_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target: Mapped[Target] = relationship(back_populates="service_samples")

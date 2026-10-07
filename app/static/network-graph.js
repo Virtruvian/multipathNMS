@@ -140,6 +140,10 @@
 
     const elements = [];
     nodes.forEach(node => {
+      if (node.active === '0') {
+        const states = node.route_ids.map(id => routeById.get(id).status);
+        node.status = states.includes('missing') ? 'missing' : states.includes('pending') ? 'pending' : states.includes('different-target') ? 'different-target' : 'missing';
+      }
       if (node.methods.length > 1) node.rtt_ms = node.average_rtt_ms = null;
       const rtt = node.methods.length > 1 ? 'RTT per route' : node.rtt_ms === null || node.rtt_ms === undefined ? 'RTT —' : 'RTT ' + Number(node.rtt_ms).toFixed(1) + ' ms';
       node.label = node.role === 'source' ? 'Source\nLocal probe'
@@ -150,7 +154,8 @@
       const deltaY = positions.get(edge.target).y - positions.get(edge.source).y;
       edge.curve_distance = deltaY ? Math.sign(deltaY) * (edge.kind === 'gap' ? -80 : 25) : 0;
       edge.label = edge.kind === 'gap' ? '* ' + edge.gap_hops + ' unobserved hop' + (edge.gap_hops === 1 ? '' : 's') : '';
-      edge.status = edge.active === '0' ? 'missing'
+      const states = edge.route_ids.map(id => routeById.get(id).status);
+      edge.status = edge.active === '0' ? states.includes('missing') ? 'missing' : states.includes('pending') ? 'pending' : states.includes('different-target') ? 'different-target' : 'missing'
         : edge.route_ids.length && edge.route_ids.every(id => routeById.get(id).status === 'degraded') ? 'degraded' : 'active';
       elements.push({group: 'edges', data: edge});
     });

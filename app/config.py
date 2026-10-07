@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     tcp_fixed_source_port: bool = False
     tcp_hop_timeout_seconds: float = Field(default=1.0, ge=0.1, le=5.0)
     tcp_sendwait_seconds: float = Field(default=0.05, ge=0.01, le=1.0)
+    service_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    service_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30)
+    service_failures_before_down: int = Field(default=3, ge=1, le=20)
+    route_missing_after_scans: int = Field(default=3, ge=1, le=20)
     suspect_after_failures: int = 3
     down_after_failures: int = 5
     degraded_loss_percent: float = 10.0

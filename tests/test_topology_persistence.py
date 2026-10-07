@@ -89,6 +89,13 @@ class TopologyPersistenceTests(unittest.TestCase):
         self.persist((24000,))
         with self.sessions() as db:
             payload = topology_payload(db, self.target_id)
+            self.assertEqual(0, payload["summary"]["missing_routes"])
+            self.assertEqual(1, payload["summary"]["pending_routes"])
+            self.assertEqual(0, len(list(db.scalars(select(Event).where(Event.event_type == "route_missing")))))
+        self.persist((24000,))
+        self.persist((24000,))
+        with self.sessions() as db:
+            payload = topology_payload(db, self.target_id)
             self.assertEqual(1, payload["summary"]["active_routes"])
             self.assertEqual(1, payload["summary"]["missing_routes"])
             self.assertEqual(1, len(list(db.scalars(select(Event).where(Event.event_type == "route_missing")))))
@@ -97,6 +104,7 @@ class TopologyPersistenceTests(unittest.TestCase):
             routes = list(db.scalars(select(RoutePath)))
             self.assertEqual(original_ids, {r.path_hash: r.id for r in routes})
             self.assertTrue(all(r.active and r.status == "active" for r in routes))
+            self.assertTrue(all(r.consecutive_misses == 0 for r in routes))
             self.assertEqual(1, len(list(db.scalars(select(Event).where(Event.event_type == "route_recovered")))))
 
     def test_legacy_out_of_range_paths_are_excluded_without_deleting_history(self) -> None:

@@ -216,3 +216,20 @@ test('a missing TCP hop is never filled by an ICMP hop at the same TTL', () => {
   assert.equal(gaps[0].data.gap_hops, 1);
   assert.equal(gaps[0].data.protocol, 'tcp');
 });
+
+test('pending and previous-DNS paths remain neutral history until absence is confirmed', () => {
+  for (const status of ['pending', 'different-target']) {
+    const data = fixture();
+    data.routes[1].active = false;
+    data.routes[1].status = status;
+    data.nodes.find(node => node.id === 'n2b').active = false;
+    data.edges.filter(edge => edge.source === 'n2b' || edge.target === 'n2b').forEach(edge => {edge.active = false;});
+    const current = build(data, {showHistory:false});
+    assert.equal(current.elements.some(item => item.data.id === 'n2b'), false);
+    const historical = build(data, {showHistory:true});
+    assert.equal(historical.elements.find(item => item.data.id === 'n2b').data.status, status);
+    const branchEdges = historical.elements.filter(item => item.group === 'edges' && (item.data.source === 'n2b' || item.data.target === 'n2b'));
+    assert.ok(branchEdges.length);
+    assert.ok(branchEdges.every(edge => edge.data.status === status));
+  }
+});
