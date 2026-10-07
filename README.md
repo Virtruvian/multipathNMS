@@ -8,6 +8,10 @@ A lightweight live route and multipath NMS built around Paris-style MDA discover
 - **/topology** — interactive Cytoscape topology with persistent Route A/B/C identities.
 - **/settings** — manage monitored targets.
 
+Click a host name or address on **/nms** to open that host's topology directly.
+Topology opens in the **TCP** view with **Fit all** framing the full graph.
+ICMP, comparison and Readable view remain available; live updates retain manual zoom and pan.
+
 The topology view is a network path analysis: a straight primary path runs from
 source to target, with alternatives branching and merging. A shared target endpoint
 represents paths with different measured hop counts; their original TTLs remain in

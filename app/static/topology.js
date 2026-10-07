@@ -237,6 +237,10 @@ function highlightRoute(route) {
   });
 }
 
+function fitAll() {
+  if (cy) cy.fit(cy.elements(), 65);
+}
+
 function readableView() {
   if (!cy || !cy.nodes().length) return;
   cy.fit(cy.elements(), 65);
@@ -263,19 +267,17 @@ function showTargetDetails() {
   ], 'Node RTT is measured from this probe, not between routers. Dotted segments show unobserved hops.');
 }
 
-document.getElementById('graph-fit').addEventListener('click', () => {
-  if (cy) cy.fit(cy.elements(), 65);
-});
+document.getElementById('graph-fit').addEventListener('click', fitAll);
 document.getElementById('graph-readable').addEventListener('click', readableView);
 document.getElementById('graph-loose').addEventListener('click', () => {
   showLooseReplies = !showLooseReplies;
   if (currentTopology) renderTopology(currentTopology);
-  readableView();
+  fitAll();
 });
 document.getElementById('graph-history').addEventListener('click', () => {
   showHistory = !showHistory;
   if (currentTopology) renderTopology(currentTopology);
-  readableView();
+  fitAll();
 });
 document.getElementById('graph-mode').addEventListener('click', () => {
   showRouterSymbols = !showRouterSymbols;
@@ -298,7 +300,7 @@ function setGraphExpanded(expanded) {
     if (!expanded && expandedViewport && expandedViewport.targetId === graphTargetId) {
       cy.zoom(expandedViewport.zoom);
       cy.pan(expandedViewport.pan);
-    } else readableView();
+    } else fitAll();
   });
 }
 expandButton.addEventListener('click', () => setGraphExpanded(!graphPanel.classList.contains('graph-expanded')));
@@ -458,7 +460,7 @@ function renderTopology(data) {
       cy.add(currentGraph.elements);
       cy.nodes().toggleClass('path-node', !showRouterSymbols).toggleClass('router-node', showRouterSymbols);
     });
-    if (graphTargetId !== data.target.id || (!hadHops && cy.nodes().length > 1)) readableView();
+    if (graphTargetId !== data.target.id || (!hadHops && cy.nodes().length > 1)) fitAll();
     graphTargetId = data.target.id;
   }
 
@@ -503,7 +505,7 @@ methodSelect.addEventListener('change', () => {
   detailSelection = {kind: 'target', id: null};
   tcpPortInput.disabled = discoverButton.disabled || methodSelect.value === 'icmp';
   if (currentTopology) renderTopology(currentTopology);
-  readableView();
+  fitAll();
 });
 
 discoverButton.addEventListener('click', async () => {
@@ -609,6 +611,8 @@ if (cy) {
 }
 
 if (select.options.length > 1) {
-  select.selectedIndex = 1;
+  const requestedTarget = new URLSearchParams(window.location.search).get('target');
+  const matchingOption = [...select.options].find(option => option.value && option.value === requestedTarget);
+  select.value = matchingOption ? matchingOption.value : select.options[1].value;
   select.dispatchEvent(new Event('change'));
 }

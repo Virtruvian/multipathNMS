@@ -34,13 +34,13 @@
         data-route-missing="{{ missing_routes }}"
         data-route-degraded="{{ degraded_routes }}"
       >
-        <div class="target-main">
+        <a class="target-main target-topology-link" href="/topology?target={{ target.id }}" title="Open topology for {{ target.name }}">
           <span class="status-dot"></span>
           <div>
             <strong>{{ target.name }}</strong>
             <small>{{ target.address }}</small>
           </div>
-        </div>
+        </a>
         <div class="target-status">
           <span>ICMP <span class="status-text">{{ target.status|upper if target.enabled else 'PAUSED' }}</span></span>
         </div>
