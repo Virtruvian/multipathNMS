@@ -11,6 +11,8 @@ from ..models import Event, Sample, Target, iso_utc
 from ..websocket import manager
 from .health import RollingStats, ping_target
 from .diagnostics import diagnostics, latest_diagnostic
+from .availability import target_availability
+from .services import service_payload
 
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,7 @@ class MonitorService:
         with SessionLocal() as db:
             current = db.get(Target, target_id)
             payload['diagnostic'] = latest_diagnostic(db, current) if current else None
+            payload['availability'] = target_availability(current, service_payload(db, current)) if current else None
         await manager.broadcast(payload)
 
     @staticmethod

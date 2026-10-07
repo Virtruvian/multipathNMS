@@ -18,6 +18,7 @@ from .services.monitor import MonitorService, monitor
 from .services.topology import topology, topology_payload
 from .services.services import services, service_payload, service_config, service_enabled
 from .services.service_health import validate_https_path
+from .services.availability import target_availability
 from .services.diagnostics import diagnostics, incident_payload, latest_diagnostic
 from .websocket import manager
 
@@ -91,7 +92,9 @@ class TargetUpdate(BaseModel):
 
 
 def serialize_target(target: Target, db) -> dict:
-    return dict(MonitorService._serialize(target), service_checks=service_payload(db, target), diagnostic=latest_diagnostic(db, target))
+    checks = service_payload(db, target)
+    return dict(MonitorService._serialize(target), service_checks=checks,
+                availability=target_availability(target, checks), diagnostic=latest_diagnostic(db, target))
 
 
 @asynccontextmanager
@@ -144,8 +147,10 @@ def nms_page(request: Request):
         )
         route_summaries: dict[int, dict] = {}
         service_checks: dict[int, list] = {}
+        availability: dict[int, dict] = {}
         for target in targets:
             service_checks[target.id] = service_payload(db, target)
+            availability[target.id] = target_availability(target, service_checks[target.id])
             route_summaries[target.id] = topology_payload(
                 db,
                 target.id,
@@ -159,6 +164,7 @@ def nms_page(request: Request):
             "events": events,
             "route_summaries": route_summaries,
             "service_checks": service_checks,
+            "availability": availability,
         },
     )
 
@@ -264,7 +270,7 @@ async def update_target(
                 raise HTTPException(status_code=404, detail="Target not found")
             result = serialize_target(target, db)
     await manager.broadcast({"type": "target_health", "target": result})
-    await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": result["service_checks"], "diagnostic": result["diagnostic"]})
+    await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": result["service_checks"], "availability": result["availability"], "diagnostic": result["diagnostic"]})
     return result
 
 

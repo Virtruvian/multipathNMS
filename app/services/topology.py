@@ -25,6 +25,7 @@ from .voyage import run_voyage, resolve_target
 from .tcp import run_tcp_trace, parse_tcp_traces
 from .services import service_payload
 from .diagnostics import latest_diagnostic
+from .availability import target_availability
 
 
 def route_label(index: int) -> str:
@@ -767,6 +768,7 @@ def topology_payload(db, target_id: int) -> dict:
             "resolved_ip": snapshot.resolved_ip if snapshot else None,
         })
 
+    checks = service_payload(db, target)
     return {
         "target": {
             "id": target.id,
@@ -781,7 +783,8 @@ def topology_payload(db, target_id: int) -> dict:
             "updated_at": iso_utc(target.updated_at),
         },
         "resolved_ip": latest_snapshot.resolved_ip if latest_snapshot else None,
-        "service_checks": service_payload(db, target),
+        "service_checks": checks,
+        "availability": target_availability(target, checks),
         "diagnostic": latest_diagnostic(db, target),
         "max_ttl": settings.voyage_max_ttl,
         "summary": {

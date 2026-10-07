@@ -26,7 +26,7 @@ jobs:
           node --check app/static/service-health.js
           node --check app/static/nms.js
           node --check app/static/settings.js
-          node --test tests/test_network_graph.js
+          node --test tests/test_network_graph.js tests/test_nms_availability.js
 
   python:
     runs-on: ubuntu-latest
@@ -116,6 +116,8 @@ jobs:
           path = f"/api/targets/{target['id']}"
           checks = request(path + "/check-services", "POST")["service_checks"]
           assert checks[0]["status"] == "healthy" and checks[1]["status"] == "disabled", checks
+          assert request("/api/targets")[0]["availability"]["label"] == "UP"
+          assert b"UP" in request("/nms")
           assert [phase["status"] for phase in checks[0]["phases"]] == ["skipped", "ok"], checks
           current = request(path, "PATCH", {"tcp_port":8081})
           assert current["service_checks"][0]["status"] == "unknown", current
@@ -123,6 +125,8 @@ jobs:
               checks = request(path + "/check-services", "POST")["service_checks"]
               assert checks[0]["status"] == expected, checks
               assert checks[0]["failed_phase"] == "tcp", checks
+          assert request("/api/targets")[0]["availability"]["label"] == "DOWN"
+          assert b"DOWN" in request("/nms")
           for attempt in range(15):
               incidents = request(path + "/diagnostics")
               if incidents and incidents[0]["status"] == "completed":

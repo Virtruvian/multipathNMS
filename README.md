@@ -9,8 +9,16 @@ A lightweight live route and multipath NMS built around Paris-style MDA discover
 - **/settings** — manage monitored targets.
 
 Click a host name or address on **/nms** to open that host's topology directly.
-NMS host rows show a status dot and compact RTT/loss/jitter/route figures without
-the ICMP status text; detailed
+NMS host rows show a status dot, compact **UP / DOWN / VERIFYING / UNKNOWN / STALE / PAUSED**
+label and RTT/loss/jitter/route figures. Availability uses the configured HTTPS check
+first, otherwise TCP, and explicitly labelled PING only if both service checks are
+disabled. The source is shown beside the label. Enabled HTTPS without a result does
+not fall back to a successful TCP check. A TCP UP result confirms a connection to
+the configured port, not the website content; enable HTTPS for a verified HTTP response.
+Three normal failures confirm DOWN. Unmeasured ping loss shows a dash rather than 0%.
+Old results expire to STALE even if live updates stop, and a read-only target snapshot
+refreshes every 30 seconds and on focus without initiating probes. Summary counts
+use this availability; underlying ICMP history/status remain independent. Detailed
 TCP/HTTPS badges appear in topology. The NMS summary still counts confirmed service alerts.
 Topology opens in the **TCP** view with **Fit all** framing the full graph.
 ICMP, comparison and Readable view remain available; live updates retain manual zoom and pan.

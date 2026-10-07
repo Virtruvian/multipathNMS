@@ -129,6 +129,8 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - browser connection changes during broadcasts cannot interrupt monitor tasks
 - unexpected ICMP/service round errors are logged and retried without counting as network failures
 - health endpoint checks background task liveness; topology failure events identify the host
+- compact NMS availability uses HTTPS, then TCP, then explicit PING fallback; stored ICMP status remains independent
+- UP/DOWN confirmation uses normal checks; unmeasured/stale/paused states remain explicit, with read-only snapshot refresh
 
 ## Next implementation step
 

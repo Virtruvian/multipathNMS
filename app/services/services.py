@@ -12,6 +12,7 @@ from ..models import Event, ServiceSample, ServiceState, Target, iso_utc
 from ..websocket import manager
 from .service_health import ServiceResult, check_service
 from .diagnostics import diagnostics, latest_diagnostic
+from .availability import target_availability
 
 
 logger = logging.getLogger(__name__)
@@ -118,9 +119,10 @@ class ServiceMonitor:
                 if target:
                     payload = service_payload(db, target)
                     diagnostic = latest_diagnostic(db, target)
+                    availability = target_availability(target, payload)
                 else:
                     return
-            await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": payload, "diagnostic": diagnostic})
+            await manager.broadcast({"type": "service_health", "target_id": target_id, "service_checks": payload, "availability": availability, "diagnostic": diagnostic})
 
     @staticmethod
     def _record(target_id: int, method: str, config: tuple[str, int, str], result: ServiceResult, *, expected_revision: int | None = None) -> None:

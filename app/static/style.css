@@ -85,15 +85,20 @@ h4{margin:20px 0 8px}
 .target-topology-link:hover strong{text-decoration:underline;color:var(--accent)}
 .target-topology-link:focus-visible{outline:2px solid var(--accent);outline-offset:5px}
 .target-main small,.settings-row small{display:block;color:var(--muted)}
-.status-dot{width:10px;height:10px;border-radius:50%;background:#64748b}
+.status-dot{width:10px;height:10px;flex-shrink:0;border-radius:50%;background:#64748b}
 .status-healthy .status-dot{background:var(--green);box-shadow:0 0 12px #34d39977}
 .status-degraded .status-dot{background:var(--yellow)}
 .status-suspect .status-dot{background:var(--orange)}
+.status-pending .status-dot{background:var(--orange)}
 .status-down .status-dot{background:var(--red);box-shadow:0 0 12px #f8717177}
 .target-status{font-size:12px;font-weight:800;letter-spacing:.08em}
 .status-healthy .target-status{color:var(--green)}
 .status-degraded .target-status{color:var(--yellow)}
 .status-suspect .target-status{color:var(--orange)}
+.status-pending .target-status{color:var(--orange)}
+.status-unknown .target-status,.status-stale .target-status,.status-disabled .target-status{color:var(--muted)}
+.target-name{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.target-name .target-status{font-size:10px;letter-spacing:.03em;white-space:nowrap}
 .status-down .target-status{color:var(--red)}
 .target-stats{
   display:flex;justify-content:flex-end;gap:16px;flex-wrap:wrap;color:var(--muted);

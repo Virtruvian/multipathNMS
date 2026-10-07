@@ -4,17 +4,17 @@
 <section class="hero-row">
   <div>
     <h1>Route Monitor</h1>
-    <p>Host health and route observations. Select a host for its topology and service details.</p>
+    <p>Availability via HTTPS, TCP or ping. Select a host for its topology and measurement details.</p>
   </div>
   <div class="live-badge">● LIVE</div>
 </section>
 
 <section class="summary">
   <div class="metric"><span>Targets</span><strong id="count-total">{{ targets|length }}</strong></div>
-  <div class="metric"><span>Healthy</span><strong id="count-healthy">0</strong></div>
-  <div class="metric"><span>Degraded</span><strong id="count-degraded">0</strong></div>
-  <div class="metric"><span>Suspect</span><strong id="count-suspect">0</strong></div>
+  <div class="metric"><span>Up</span><strong id="count-healthy">0</strong></div>
+  <div class="metric"><span>Verifying</span><strong id="count-pending">0</strong></div>
   <div class="metric"><span>Down</span><strong id="count-down">0</strong></div>
+  <div class="metric"><span>Unknown / stale</span><strong id="count-unknown">0</strong></div>
   <div class="metric"><span>Route alerts</span><strong id="count-route-alerts">0</strong></div>
   <div class="metric"><span>Service alerts</span><strong id="count-service-alerts">0</strong></div>
 </section>
@@ -27,24 +27,25 @@
       {% set routes = route_summaries.get(target.id, {}) %}
       {% set missing_routes = routes.get('missing_routes', 0) %}
       {% set degraded_routes = routes.get('degraded_routes', 0) %}
+      {% set reachability = availability[target.id] %}
       <article
-        class="target-card status-{{ target.status if target.enabled else 'disabled' }}{% if missing_routes or degraded_routes %} route-alert{% endif %}"
+        class="target-card status-{{ reachability.status }}{% if missing_routes or degraded_routes %} route-alert{% endif %}"
         id="target-{{ target.id }}"
-        data-status="{{ target.status if target.enabled else 'disabled' }}"
+        data-status="{{ reachability.status }}"
         data-route-missing="{{ missing_routes }}"
         data-route-degraded="{{ degraded_routes }}"
       >
         <a class="target-main target-topology-link" href="/topology?target={{ target.id }}" title="Open topology for {{ target.name }}">
-          <span class="status-dot"></span>
+          <span class="status-dot" title="{{ reachability.detail }}"></span>
           <div>
-            <strong>{{ target.name }}</strong>
+            <div class="target-name"><strong>{{ target.name }}</strong><span class="target-status" title="{{ reachability.detail }}">{{ reachability.label }}{% if reachability.source %} · {{ reachability.source }}{% endif %}</span></div>
             <small>{{ target.address }}</small>
           </div>
         </a>
         <div class="target-stats">
-          <span>RTT <b class="latency">{{ '%.1f'|format(target.latency_ms) if target.latency_ms is not none else '—' }}</b> ms</span>
-          <span>Loss <b class="loss">{{ '%.1f'|format(target.loss_percent) }}</b>%</span>
-          <span>Jitter <b class="jitter">{{ '%.1f'|format(target.jitter_ms) if target.jitter_ms is not none else '—' }}</b> ms</span>
+          <span title="ICMP ping latency">RTT <b class="latency">{{ '%.1f'|format(target.latency_ms) if target.latency_ms is not none else '—' }}</b> ms</span>
+          <span title="ICMP ping loss">Loss <b class="loss">{{ '%.1f'|format(target.loss_percent) if target.status != 'unknown' else '—' }}</b>%</span>
+          <span title="ICMP ping jitter">Jitter <b class="jitter">{{ '%.1f'|format(target.jitter_ms) if target.jitter_ms is not none else '—' }}</b> ms</span>
           <span>Routes <b class="routes-active">{{ routes.get('active_routes', 0) }}</b></span>
           <span>Route degraded <b class="routes-degraded">{{ degraded_routes }}</b></span>
           <span>Confirmed absent <b class="routes-missing">{{ missing_routes }}</b></span>
@@ -74,5 +75,6 @@
 {% endblock %}
 {% block scripts %}
 <script id="initial-service-checks" type="application/json">{{ service_checks|tojson }}</script>
+<script id="initial-availability" type="application/json">{{ availability|tojson }}</script>
 <script src="/static/nms.js"></script>
 {% endblock %}
