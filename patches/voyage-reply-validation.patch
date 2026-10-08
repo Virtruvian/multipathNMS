@@ -1,0 +1,132 @@
+--- a/src/probe.rs
++++ b/src/probe.rs
+@@ -1,11 +1,11 @@
+-use std::thread::sleep;
++use std::{collections::HashSet, net::IpAddr, thread::sleep};
+ 
+ use log::info;
+ 
+ use anyhow::Result;
+ use caracat::{
+     high_level::{Config, SendLoop},
+-    models::{Probe, Reply},
++    models::{Probe, Reply, L4},
+     rate_limiter::RateLimiter,
+     sender::Sender,
+     utilities::prefix_filter_from_file,
+@@ -13,7 +13,31 @@
+ 
+ use crate::receiver::ReceiveCache;
+ 
++type ProbeKey = (IpAddr, u16, u16, u8, u8);
++
++fn probe_key(probe: &Probe) -> ProbeKey {
++    let protocol = match probe.protocol {
++        L4::ICMP => 1,
++        L4::UDP => 17,
++        L4::ICMPv6 => 58,
++    };
++    let dst_port = if protocol == 17 { probe.dst_port } else { 0 };
++    (probe.dst_addr, probe.src_port, dst_port, probe.ttl, protocol)
++}
++
++fn reply_matches_probes(reply: &Reply, sent: &HashSet<ProbeKey>, instance_id: u16) -> bool {
++    reply.is_valid(instance_id) && sent.contains(&(
++        reply.probe_dst_addr, reply.probe_src_port, reply.probe_dst_port,
++        reply.probe_ttl, reply.probe_protocol,
++    ))
++}
++
+ pub fn probe<T: Iterator<Item = Probe>>(config: Config, probes: T) -> Result<Vec<Reply>> {
++    // The capture interface also sees unrelated pings and other measurements.
++    let probes: Vec<Probe> = probes.collect();
++    let sent: HashSet<ProbeKey> = probes.iter().map(probe_key).collect();
++    let instance_id = config.instance_id;
++
+     let allowed_prefixes = match config.allowed_prefixes_file {
+         None => None,
+         Some(path) => Some(prefix_filter_from_file(&path)?),
+@@ -57,7 +81,7 @@
+ 
+     // let logger = StatisticsLogger::new(prober_statistics, rate_statistics, receiver_statistics);
+ 
+-    prober.probe(probes)?;
++    prober.probe(probes.into_iter())?;
+     info!(
+         "Waiting {:?} for last replies...",
+         config.receiver_wait_time
+@@ -69,9 +93,74 @@
+     // let final_receiver_statistics = receiver.statistics().lock().unwrap().clone();
+ 
+     let replies = receiver.stop();
++    let captured = replies.len();
++    let replies: Vec<Reply> = replies.into_iter()
++        .filter(|reply| reply_matches_probes(reply, &sent, instance_id))
++        .collect();
++    info!("Accepted {} probe replies; discarded {} unrelated or invalid replies",
++        replies.len(), captured - replies.len());
+     // logger.stop();
+ 
+     Ok(replies)
+ 
+     // Ok((final_prober_statistics, final_receiver_statistics))
+ }
++
++
++#[cfg(test)]
++mod nms_tests {
++    use super::*;
++    use crate::helpers::reply;
++
++    #[test]
++    fn nms_reply_filter_rejects_foreign_measurements_and_bad_checksums() {
++        let instance_id = 1234;
++        let destination: IpAddr = "8.8.8.8".parse().unwrap();
++        let probe = Probe { dst_addr: destination, src_port: 24000,
++            dst_port: 33434, ttl: 3, protocol: L4::ICMP };
++        let sent = HashSet::from([probe_key(&probe)]);
++        let mut observation = reply(3, "10.0.0.1", "8.8.8.8");
++        observation.probe_src_port = 24000;
++        observation.probe_dst_port = 0;
++        observation.probe_id = probe.checksum(instance_id);
++        assert!(reply_matches_probes(&observation, &sent, instance_id));
++        assert!(!reply_matches_probes(&observation, &sent, instance_id + 1));
++        observation.probe_id ^= 1;
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_dst_addr = "52.174.3.88".parse().unwrap();
++        observation.probe_id = observation.checksum(instance_id);
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_dst_addr = destination;
++        observation.probe_ttl = 54;
++        observation.probe_id = observation.checksum(instance_id);
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_ttl = 3;
++        observation.reply_icmp_type = 0;
++        observation.reply_src_addr = destination;
++        observation.probe_id = 0;
++        assert!(reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_src_port = 4711; // ordinary health ping
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++    }
++
++    #[test]
++    fn nms_reply_filter_matches_udp_ports_and_protocol() {
++        let instance_id = 1234;
++        let probe = Probe { dst_addr: "8.8.8.8".parse().unwrap(), src_port: 24000,
++            dst_port: 33434, ttl: 3, protocol: L4::UDP };
++        let sent = HashSet::from([probe_key(&probe)]);
++        let mut observation = reply(3, "8.8.8.8", "8.8.8.8");
++        observation.reply_icmp_type = 3;
++        observation.reply_icmp_code = 3;
++        observation.probe_protocol = 17;
++        observation.probe_src_port = 24000;
++        observation.probe_dst_port = 33434;
++        observation.probe_id = probe.checksum(instance_id);
++        assert!(reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_dst_port = 33435;
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++        observation.probe_dst_port = 33434;
++        observation.probe_protocol = 1;
++        assert!(!reply_matches_probes(&observation, &sent, instance_id));
++    }
++}

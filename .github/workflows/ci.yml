@@ -1,0 +1,284 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate JavaScript and graph behavior
+        run: |
+          node --check app/static/app.js
+          node --check app/static/network-graph.js
+          node --check app/static/topology.js
+          node --check app/static/service-health.js
+          node --check app/static/nms.js
+          node --check app/static/settings.js
+          node --check app/static/users.js
+          node --test tests/test_network_graph.js tests/test_nms_availability.js tests/test_live_channel.js
+
+  python:
+    runs-on: ubuntu-latest
+    env:
+      APP_DATA_DIR: ./test-data
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Compile Python sources
+        run: python -m compileall -q app tests
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --tag multipathnms:ci .
+
+      - name: Start container
+        run: |
+          docker run -d             --name multipathnms-ci             --cap-add NET_RAW             -p 8090:8080             multipathnms:ci
+
+      - name: Smoke test
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8090/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs multipathnms-ci
+          exit 1
+
+      - name: TCP engine smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          from app.config import settings
+          from app.services.tcp import run_tcp_trace, parse_tcp_traces
+
+          async def check():
+              for fixed in (False, True):
+                  settings.tcp_fixed_source_port = fixed
+                  for port, expected in ((8080, "syn-ack"), (8081, "reset")):
+                      result = await run_tcp_trace("127.0.0.1", port)
+                      observed = parse_tcp_traces(result)
+                      assert observed.paths and all(path.complete for path in observed.paths), result.traces
+                      assert all(path.endpoint_response == expected for path in observed.paths), result.traces
+                      assert all(path.hops[-1].address == "127.0.0.1" for path in observed.paths)
+                      assert all((source is not None) == fixed for source in result.source_ports)
+                      print(f"TCP:{port}: {expected}, fixed_source={fixed}, {len(result.traces)} traces parsed")
+
+          asyncio.run(check())
+          PY
+
+      - name: Login and privacy smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          import base64
+          import json
+          import os
+          from pathlib import Path
+          import secrets
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          import websockets
+          from app.auth_credentials import write_credentials
+
+          def request(path, headers=None, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              headers = {"Content-Type": "application/json", **(headers or {})}
+              try:
+                  response = urlopen(Request("http://127.0.0.1:8080" + path, headers=headers, method=method, data=data), timeout=5)
+              except HTTPError as error:
+                  response = error
+              with response:
+                  return response.status, response.headers, response.read()
+
+          assert request("/nms")[0] == 200
+          assert request("/api/nms")[0] == 200
+          assert request("/settings")[0] == 503
+          password = secrets.token_urlsafe(32)
+          write_credentials(Path("/data/admin-auth.json"), "ci-admin", password)
+          with os.fdopen(os.open("/tmp/ci-basic", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as file:
+              file.write("Basic " + base64.b64encode(("ci-admin:" + password).encode()).decode())
+          authorization = Path("/tmp/ci-basic").read_text()
+          for path in ("/settings", "/topology", "/api/targets", "/api/topology/1", "/api/events", "/docs", "/openapi.json"):
+              status, headers, _ = request(path)
+              assert status == 401 and headers["WWW-Authenticate"].startswith("Basic "), (path, status)
+          assert request("/api/targets", method="POST")[0] == 401
+          for path in ("/settings", "/topology"):
+              status, headers, body = request(path, {"Authorization": authorization})
+              assert status == 200 and headers["Cache-Control"] == "no-store"
+              assert b'data-live-channel="admin"' in body
+          cookie = headers["Set-Cookie"].split(";")[0]
+          assert "HttpOnly" in headers["Set-Cookie"] and "SameSite=strict" in headers["Set-Cookie"]
+          assert request("/api/targets", {"Cookie": cookie})[0] == 200
+          assert request("/api/targets", {"Cookie": cookie, "Origin": "http://elsewhere.invalid"}, "POST")[0] == 403
+
+          async def check_websockets():
+              try:
+                  async with websockets.connect("ws://127.0.0.1:8080/ws/admin"):
+                      raise AssertionError("Private stream allowed anonymous access")
+              except websockets.exceptions.InvalidStatus:
+                  pass
+              async with websockets.connect("ws://127.0.0.1:8080/ws/admin", additional_headers={"Cookie": cookie, "Origin": "http://127.0.0.1:8080"}):
+                  pass
+              async with websockets.connect("ws://127.0.0.1:8080/ws/live"):
+                  pass
+          asyncio.run(check_websockets())
+          admin = {"Cookie": cookie}
+          users = json.loads(request("/api/users", admin)[2])
+          assert len(users) == 1 and users[0]["role"] == "admin"
+          assert request("/api/users/" + users[0]["id"], admin, "DELETE")[0] == 409
+          viewer_password = secrets.token_urlsafe(32)
+          status, _, body = request("/api/users", admin, "POST", {"username": "ci-viewer", "password": viewer_password})
+          assert status == 201, status
+          viewer = json.loads(body)
+          assert set(viewer) == {"id", "username", "role"} and viewer["role"] == "viewer"
+          assert request("/api/users", admin, "POST", {"username": "ci-viewer", "password": viewer_password})[0] == 409
+          viewer_basic = {"Authorization": "Basic " + base64.b64encode(("ci-viewer:" + viewer_password).encode()).decode()}
+          status, viewer_headers, body = request("/topology", viewer_basic)
+          assert status == 200 and b'data-role="viewer"' in body
+          assert b'id="discover-btn" disabled' in body
+          viewer_cookie = viewer_headers["Set-Cookie"].split(";")[0]
+          assert request("/settings", viewer_basic)[0] == 403
+          assert request("/api/users", viewer_basic)[0] == 403
+          assert request("/api/targets", viewer_basic, "POST")[0] == 403
+          assert request("/api/users/" + viewer["id"], admin, "PATCH", {"password": secrets.token_urlsafe(32)})[0] == 200
+          assert request("/topology", {"Cookie": viewer_cookie})[0] == 401
+          assert request("/topology", viewer_basic)[0] == 401
+          assert request("/settings", admin)[0] == 200
+          assert request("/api/users/" + viewer["id"], admin, "DELETE")[0] == 204
+          assert len(json.loads(request("/api/users", admin)[2])) == 1
+          print("Login: closed before setup, browser challenge, authenticated pages/APIs/stream, anonymous NMS and cross-origin blocking passed")
+          print("Users: admin-only CRUD, last-admin protection, read-only viewer, password reset and isolated session revocation passed")
+          PY
+
+      - name: Service API smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import json
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          import time
+          from pathlib import Path
+
+          def request(path, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
+                                   headers={"Content-Type": "application/json", "Authorization": Path("/tmp/ci-basic").read_text()}, method=method), timeout=15) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw and response.headers.get("Content-Type", "").startswith("application/json") else raw
+
+          target = request("/api/targets", "POST", {"name":"Service CI", "address":"127.0.0.1", "tcp_port":8080})
+          path = f"/api/targets/{target['id']}"
+          checks = request(path + "/check-services", "POST")["service_checks"]
+          assert checks[0]["status"] == "healthy" and checks[1]["status"] == "disabled", checks
+          assert request("/api/targets")[0]["availability"]["label"] == "UP"
+          assert b"UP" in request("/nms")
+          public = request("/api/nms")[0]
+          assert public["availability"]["label"] == "UP" and "diagnostic" not in public and "https_path" not in public
+          assert all(set(check) == {"status"} for check in public["service_checks"]), public
+          assert [phase["status"] for phase in checks[0]["phases"]] == ["skipped", "ok"], checks
+          current = request(path, "PATCH", {"tcp_port":8081})
+          assert current["service_checks"][0]["status"] == "unknown", current
+          for expected in ("pending", "pending", "down"):
+              checks = request(path + "/check-services", "POST")["service_checks"]
+              assert checks[0]["status"] == expected, checks
+              assert checks[0]["failed_phase"] == "tcp", checks
+          assert request("/api/targets")[0]["availability"]["label"] == "DOWN"
+          assert b"DOWN" in request("/nms")
+          for attempt in range(15):
+              incidents = request(path + "/diagnostics")
+              if incidents and incidents[0]["status"] == "completed":
+                  break
+              time.sleep(1)
+          else:
+              raise AssertionError(f"Automatic diagnosis did not finish: {incidents}")
+          assert len(incidents) == 1, incidents
+          incident = request(path + f"/diagnostics/{incidents[0]['id']}?download=true")
+          assert incident["results"]["ping"]["received"] == 3, incident
+          assert incident["results"]["services"][0]["failed_phase"] == "tcp", incident
+          assert incident["results"]["trace"]["paths"][0]["endpoint_response"] == "reset", incident
+          assert request("/api/topology/" + str(target["id"]))["diagnostic"]["id"] == incident["id"]
+          assert request("/api/targets")[0]["service_checks"][0]["consecutive_failures"] == 3
+          request(path, "PATCH", {"tcp_port":8080})
+          assert request(path + "/check-services", "POST")["service_checks"][0]["status"] == "healthy"
+          try:
+              request(path, "PATCH", {"https_path":"//elsewhere.invalid/"})
+              raise AssertionError("Invalid HTTPS path accepted")
+          except HTTPError as error:
+              assert error.code == 422, error
+          for page in ("/nms", "/settings", "/topology"):
+              assert b"Service" in request(page) or page == "/settings"
+          request(path, "DELETE")
+          print("Service API: TCP connect/refusal, phase evidence, automatic incident, isolated counters, config reset, download and all pages passed")
+          PY
+
+      - name: Monitoring survives browser connection changes
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          import json
+          from urllib.request import Request, urlopen
+          import websockets
+          from pathlib import Path
+
+          def request(path, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
+                                   headers={"Content-Type": "application/json", "Authorization": Path("/tmp/ci-basic").read_text()}, method=method), timeout=5) as response:
+                  return json.load(response) if response.status != 204 else None
+
+          async def navigate():
+              for attempt in range(40):
+                  async with websockets.connect("ws://127.0.0.1:8080/ws/live"):
+                      await asyncio.sleep(.1)
+
+          target = request("/api/targets", "POST", {"name":"Browser CI", "address":"127.0.0.1", "tcp_port":8080})
+          try:
+              asyncio.run(navigate())
+              first = next(item for item in request("/api/targets") if item["id"] == target["id"])
+              assert first["status"] == "healthy" and first["last_seen"], first
+              asyncio.run(asyncio.sleep(3))
+              second = next(item for item in request("/api/targets") if item["id"] == target["id"])
+              assert second["status"] == "healthy" and second["updated_at"] != first["updated_at"], second
+              health = request("/healthz")
+              assert health["status"] == "ok" and all(health["workers"].values()), health
+              print("Monitoring: repeated websocket navigation, fresh ICMP samples and live workers passed")
+          finally:
+              request(f"/api/targets/{target['id']}", "DELETE")
+          PY
+
+      - name: Container logs
+        if: always()
+        run: docker logs multipathnms-ci || true

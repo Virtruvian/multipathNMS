@@ -1,0 +1,58 @@
+from sqlalchemy import create_engine, inspect
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+from .config import settings
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+engine = create_engine(
+    settings.database_url,
+    connect_args={'check_same_thread': False},
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def init_db() -> None:
+    from . import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+    migrate_probe_scopes(engine)
+
+
+def migrate_probe_scopes(bind) -> None:
+    """Add probe metadata to existing SQLite databases, retaining IDs/history."""
+    additions = {
+        "targets": {
+            "tcp_port": f"INTEGER NOT NULL DEFAULT {settings.tcp_port}",
+            "tcp_check_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+            "https_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+            "https_path": "VARCHAR(1024) NOT NULL DEFAULT '/'",
+            "service_revision": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "topology_snapshots": {
+            "protocol": "VARCHAR(8) NOT NULL DEFAULT 'icmp'",
+            "destination_port": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "route_paths": {
+            "protocol": "VARCHAR(8) NOT NULL DEFAULT 'icmp'",
+            "destination_port": "INTEGER NOT NULL DEFAULT 0",
+            "endpoint_response": "VARCHAR(40)",
+            "consecutive_misses": "INTEGER NOT NULL DEFAULT 0",
+            "resolved_ip": "VARCHAR(64)",
+        },
+        "service_states": {"phase_results": "TEXT"},
+        "service_samples": {"phase_results": "TEXT"},
+        "samples": {"address": "VARCHAR(255)"},
+    }
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        for table, fields in additions.items():
+            if not inspector.has_table(table):
+                continue  # New tables are created by init_db, not an ALTER migration.
+            columns = {column["name"] for column in inspector.get_columns(table)}
+            for name, definition in fields.items():
+                if name not in columns:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")

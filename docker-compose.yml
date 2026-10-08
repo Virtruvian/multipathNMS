@@ -1,0 +1,37 @@
+services:
+  multipathnms:
+    build: .
+    container_name: multipathnms
+    init: true
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW
+    ports:
+      - "8090:8080"
+    environment:
+      APP_DATA_DIR: /data
+      HEALTH_INTERVAL_SECONDS: 2
+      TOPOLOGY_INTERVAL_SECONDS: 60
+      TOPOLOGY_STALE_MINUTES: 15
+      VOYAGE_TIMEOUT_SECONDS: 90
+      VOYAGE_PROBING_RATE: 50
+      VOYAGE_CONFIDENCE: 99
+      TCP_ENABLED: "true"
+      TCP_PORT: 443
+      TCP_FLOWS: 3
+      TCP_FIXED_SOURCE_PORT: "false"
+      TCP_HOP_TIMEOUT_SECONDS: 1
+      TCP_SENDWAIT_SECONDS: 0.05
+      SERVICE_INTERVAL_SECONDS: 30
+      SERVICE_TIMEOUT_SECONDS: 5
+      SERVICE_FAILURES_BEFORE_DOWN: 3
+      ROUTE_MISSING_AFTER_SCANS: 3
+      DIAGNOSTICS_ENABLED: "true"
+      DIAGNOSTIC_COOLDOWN_SECONDS: 300
+      DIAGNOSTIC_TIMEOUT_SECONDS: 30
+      SUSPECT_AFTER_FAILURES: 3
+      DOWN_AFTER_FAILURES: 5
+      DEGRADED_LOSS_PERCENT: 10
+      DEGRADED_LATENCY_MULTIPLIER: 2
+    volumes:
+      - ./data:/data

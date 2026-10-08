@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Topology · multipathNMS{% endblock %}
+{% block main_class %}topology-page{% endblock %}
+{% block head %}
+<script src="https://unpkg.com/cytoscape@3.32.0/dist/cytoscape.min.js"></script>
+{% endblock %}
+{% block content %}
+<section class="hero-row">
+  <div>
+    <h1>Network Path Analysis</h1>
+    <p>Follow ICMP flows and sampled TCP hop sequences from source to target.</p>
+  </div>
+  <div class="toolbar">
+    <select id="target-select">
+      <option value="">Select target…</option>
+      {% for target in targets %}
+      <option value="{{ target.id }}">{{ target.name }} · {{ target.address }}</option>
+      {% endfor %}
+    </select>
+    <select id="trace-method" aria-label="Measurement view">
+      <option value="all">Compare ICMP + TCP</option>
+      <option value="icmp">ICMP</option>
+      <option value="tcp" selected>TCP</option>
+    </select>
+    <label class="tcp-port-label" for="tcp-port">TCP port
+      <input id="tcp-port" type="number" min="1" max="65535" step="1" value="443" {% if not can_manage %}disabled{% endif %}>
+    </label>
+    <button id="discover-btn" {% if not can_manage %}disabled title="Administrator access required"{% endif %}>Discover now</button>
+  </div>
+</section>
+
+<section class="summary topology-summary">
+  <div class="metric"><span>Active routes</span><strong id="topology-active">0</strong></div>
+  <div class="metric"><span>Degraded</span><strong id="topology-degraded">0</strong></div>
+  <div class="metric"><span>Confirmed absent</span><strong id="topology-missing">0</strong></div>
+  <div class="metric"><span>Awaiting confirmation</span><strong id="topology-pending">0</strong></div>
+  <div class="metric"><span>Probe replies</span><strong id="topology-replies">0</strong></div>
+  <div class="metric metric-wide"><span>Last scan</span><strong id="topology-last-scan">—</strong></div>
+</section>
+
+<section class="panel service-panel" aria-label="Service reachability">
+  <div class="service-heading"><strong>Service reachability</strong><button id="check-services-btn" type="button" {% if not can_manage %}disabled title="Administrator access required"{% endif %}>Check services now</button></div>
+  <div id="service-checks" class="service-checks"></div>
+  <p class="detail-note">TCP checks a normal connection. HTTPS verifies TLS and accepts HTTP 200–399 without following redirects. Route absence does not establish a service outage.</p>
+</section>
+
+<section class="panel measurement-panel" aria-label="Measurement comparison">
+  <div id="measurement-comparison" class="measurement-comparison"></div>
+  <p class="detail-note">TCP samples three traces by default. Dashed blue lines show hop order; source ports may vary, so same-flow links are not confirmed. Gaps stay unobserved. Target health uses ICMP ping.</p>
+</section>
+
+<section class="topology-layout">
+  <div class="panel topology-panel">
+    <div class="graph-legend">
+      <span><i class="legend-dot legend-active"></i>ICMP current</span>
+      <span><i class="legend-dot legend-tcp"></i>TCP sampled hop order</span>
+      <span><i class="legend-dot legend-degraded"></i>Degraded route</span>
+      <span><i class="legend-dot legend-missing"></i>Confirmed absent</span>
+      <span><i class="legend-gap"></i>Pending / previous target IP</span>
+      <span><i class="legend-gap"></i>Unobserved hops</span>
+    </div>
+    <div class="graph-controls" aria-label="Topology controls">
+      <div class="graph-direction">SOURCE <span>→</span> TARGET</div>
+      <button id="graph-expand" type="button" aria-expanded="false">Expand</button>
+      <button id="graph-all" type="button">All routes</button>
+      <button id="graph-history" type="button" aria-pressed="false">Show recent history</button>
+      <button id="graph-mode" type="button" aria-pressed="false">Router symbols</button>
+      <button id="graph-loose" type="button" aria-pressed="false">Show loose replies</button>
+      <button id="graph-fit" type="button">Fit all</button>
+      <button id="graph-readable" type="button">Readable view</button>
+      <button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button>
+      <button id="graph-zoom-in" type="button" aria-label="Zoom in">+</button>
+    </div>
+    <div id="cy"></div>
+    <div id="graph-empty" class="graph-empty">Waiting for topology discovery…<small>Use Discover now to find the first paths.</small></div>
+    <div class="graph-caption"><span id="graph-filter-info">Current measured paths</span><br>ICMP: flow adjacency · TCP: sampled hop order · Physical links are not verified · Drag to pan · Scroll to zoom · RTT is measured from the probe</div>
+  </div>
+
+  <aside class="topology-sidebar">
+    <section class="panel">
+      <div class="panel-title">Routes</div>
+      <div id="route-list" class="route-list">
+        <div class="empty">Select a target.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">Details</div>
+      <div id="topology-details" class="details">
+        <p>Select a target to inspect its topology.</p>
+      </div>
+      <details>
+        <summary>Raw probe output (manual scan)</summary>
+        <pre id="voyage-output">—</pre>
+      </details>
+    </section>
+  </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/service-health.js"></script>
+<script src="/static/network-graph.js"></script>
+<script src="/static/topology.js"></script>
+{% endblock %}

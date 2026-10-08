@@ -1,0 +1,44 @@
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    app_data_dir: Path = Path("/data")
+    auth_file: Path | None = None
+    auth_session_seconds: int = Field(default=28800, ge=900, le=86400)
+    health_interval_seconds: float = 2.0
+    topology_interval_seconds: int = 60
+    topology_stale_minutes: int = 15
+    voyage_timeout_seconds: int = 90
+    voyage_probing_rate: int = 50
+    voyage_confidence: float = 99.0
+    voyage_max_ttl: int = Field(default=32, ge=1, le=64)
+    tcp_enabled: bool = True
+    tcp_port: int = Field(default=443, ge=1, le=65535)
+    tcp_flows: int = Field(default=3, ge=1, le=8)
+    tcp_fixed_source_port: bool = False
+    tcp_hop_timeout_seconds: float = Field(default=1.0, ge=0.1, le=5.0)
+    tcp_sendwait_seconds: float = Field(default=0.05, ge=0.01, le=1.0)
+    service_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    service_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30)
+    service_failures_before_down: int = Field(default=3, ge=1, le=20)
+    route_missing_after_scans: int = Field(default=3, ge=1, le=20)
+    diagnostics_enabled: bool = True
+    diagnostic_cooldown_seconds: int = Field(default=300, ge=60, le=86400)
+    diagnostic_timeout_seconds: float = Field(default=30, ge=5, le=120)
+    suspect_after_failures: int = 3
+    down_after_failures: int = 5
+    degraded_loss_percent: float = 10.0
+    degraded_latency_multiplier: float = 2.0
+
+    @property
+    def database_url(self) -> str:
+        self.app_data_dir.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{self.app_data_dir / 'multipathnms.db'}"
+
+
+settings = Settings()
