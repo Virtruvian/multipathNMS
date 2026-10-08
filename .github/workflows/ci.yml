@@ -27,6 +27,7 @@ jobs:
           node --check app/static/service-health.js
           node --check app/static/nms.js
           node --check app/static/settings.js
+          node --check app/static/users.js
           node --test tests/test_network_graph.js tests/test_nms_availability.js tests/test_live_channel.js
 
   python:
@@ -112,9 +113,11 @@ jobs:
           import websockets
           from app.auth_credentials import write_credentials
 
-          def request(path, headers=None, method="GET"):
+          def request(path, headers=None, method="GET", body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              headers = {"Content-Type": "application/json", **(headers or {})}
               try:
-                  response = urlopen(Request("http://127.0.0.1:8080" + path, headers=headers or {}, method=method), timeout=5)
+                  response = urlopen(Request("http://127.0.0.1:8080" + path, headers=headers, method=method, data=data), timeout=5)
               except HTTPError as error:
                   response = error
               with response:
@@ -152,7 +155,32 @@ jobs:
               async with websockets.connect("ws://127.0.0.1:8080/ws/live"):
                   pass
           asyncio.run(check_websockets())
+          admin = {"Cookie": cookie}
+          users = json.loads(request("/api/users", admin)[2])
+          assert len(users) == 1 and users[0]["role"] == "admin"
+          assert request("/api/users/" + users[0]["id"], admin, "DELETE")[0] == 409
+          viewer_password = secrets.token_urlsafe(32)
+          status, _, body = request("/api/users", admin, "POST", {"username": "ci-viewer", "password": viewer_password})
+          assert status == 201, status
+          viewer = json.loads(body)
+          assert set(viewer) == {"id", "username", "role"} and viewer["role"] == "viewer"
+          assert request("/api/users", admin, "POST", {"username": "ci-viewer", "password": viewer_password})[0] == 409
+          viewer_basic = {"Authorization": "Basic " + base64.b64encode(("ci-viewer:" + viewer_password).encode()).decode()}
+          status, viewer_headers, body = request("/topology", viewer_basic)
+          assert status == 200 and b'data-role="viewer"' in body
+          assert b'id="discover-btn" disabled' in body
+          viewer_cookie = viewer_headers["Set-Cookie"].split(";")[0]
+          assert request("/settings", viewer_basic)[0] == 403
+          assert request("/api/users", viewer_basic)[0] == 403
+          assert request("/api/targets", viewer_basic, "POST")[0] == 403
+          assert request("/api/users/" + viewer["id"], admin, "PATCH", {"password": secrets.token_urlsafe(32)})[0] == 200
+          assert request("/topology", {"Cookie": viewer_cookie})[0] == 401
+          assert request("/topology", viewer_basic)[0] == 401
+          assert request("/settings", admin)[0] == 200
+          assert request("/api/users/" + viewer["id"], admin, "DELETE")[0] == 204
+          assert len(json.loads(request("/api/users", admin)[2])) == 1
           print("Login: closed before setup, browser challenge, authenticated pages/APIs/stream, anonymous NMS and cross-origin blocking passed")
+          print("Users: admin-only CRUD, last-admin protection, read-only viewer, password reset and isolated session revocation passed")
           PY
 
       - name: Service API smoke test

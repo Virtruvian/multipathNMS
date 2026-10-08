@@ -59,9 +59,10 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - The application is intended for trusted/internal deployment unless authentication and access controls are explicitly added.
 - Docker capabilities should be limited to what the probe engine needs.
 - Pin external measurement-engine source revisions used in Docker builds.
-- Topology, Settings, detailed APIs, API docs and `/ws/admin` require administrator authentication; missing credentials fail closed.
+- Topology, measurement APIs and `/ws/admin` require a signed-in account. Settings, user management, API docs and all mutations require admin. Viewers are read-only through an explicit path/method allowlist; missing credentials fail closed.
 - `/nms`, `/api/nms` and `/ws/live` stay public through explicit field allowlists. Never expose route graphs, diagnostics, service paths or raw probe errors in their HTML, JSON or live messages.
-- Passwords are salted PBKDF2 hashes in a private persistent credential file, never hardcoded defaults or plaintext configuration. Password replacement invalidates signed sessions.
+- Passwords are salted PBKDF2 hashes with per-account session keys in a private persistent credential file, never hardcoded defaults or plaintext configuration. Password/role changes and deletion invalidate only that account's signed sessions.
+- Preserve the previous single-admin login during upgrade. Serialize account writes with a stable file lock and atomic replacement. Recheck the actor's admin role under the write lock; protect the last admin and self-deletion/demotion.
 
 ## Code conventions
 
@@ -135,6 +136,7 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - compact NMS availability uses HTTPS, then TCP, then explicit PING fallback; stored ICMP status remains independent
 - UP/DOWN confirmation uses normal checks; unmeasured/stale/paused states remain explicit, with read-only snapshot refresh
 - browser login popup for private views and operations, signed cookies for private live updates, and a dependency-free password setup command
+- admin-only user creation/deletion and role/password changes in Settings; read-only viewers, per-account session revocation and non-destructive legacy login upgrade
 
 ## Next implementation step
 

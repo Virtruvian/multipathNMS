@@ -235,12 +235,13 @@ Update an existing installation, including the patched probe executable:
 ```bash
 cd /opt/multipathNMS
 sudo git pull --ff-only origin develop/init-project
-sudo python3 scripts/set-admin-password.py
 sudo docker compose up -d --build
 ```
 
 Run **Discover now** after updating. Previously saved paths are retained as recent
 history for `TOPOLOGY_STALE_MINUTES` (default 15 minutes), rather than deleting data.
+Existing administrator credentials and other accounts stay intact; no password
+setup command is needed for a normal update.
 
 ## Configuration
 
@@ -299,20 +300,22 @@ APP_DATA_DIR=./test-data python -m unittest discover -s tests -v
 Graph preparation tests use Node.js 22 without additional npm dependencies:
 
 ```bash
-node --test tests/test_network_graph.js
+node --test tests/test_*.js
 ```
 
 ## Security
 
-**Topology and Settings require an administrator login**, using the browser's
-username/password popup. All detailed APIs, diagnosis downloads, target changes,
-discovery commands, API documentation and `/ws/admin` require the same login.
+**Topology requires a user login; Settings requires an admin**, using the browser's
+username/password popup. Detailed measurement APIs, diagnosis downloads and the
+private `/ws/admin` live stream are available to signed-in viewers and admins.
+Target changes, manual probing, API documentation and user management require
+the admin role. The server checks these permissions for every request.
 The NMS dashboard stays public. `/api/nms` and `/ws/live` expose only dashboard
 fields: host name/address, availability, ping metrics and alert/route counts.
 Public event messages omit probe errors and route details. Target addresses on
 the NMS page remain public; the login protects the additional private information.
 
-Create your own account on the server before starting the updated container:
+Create the initial admin account on the server before starting a new installation:
 
 ```bash
 cd /opt/multipathNMS
@@ -320,18 +323,41 @@ sudo python3 scripts/set-admin-password.py
 ```
 
 The command prompts for a username (default `admin`) and a password of at least
-12 characters, then stores only a salted PBKDF2-SHA256 password hash and a random
-session-signing key in `data/admin-auth.json` with file permissions `0600`.
+12 characters. Each account has its own salted PBKDF2-SHA256 password hash and
+random session-signing key in `data/admin-auth.json`, with file permissions `0600`.
 There is no default password. It needs only Python 3's standard library, without
 installing the application's dependencies on the host. The existing Compose data
-volume preserves the login across rebuilds. On subsequent updates, keep the file
-and skip the password command unless you want to replace the login.
+volume preserves all accounts across rebuilds. The previous single-admin file is
+automatically read as an admin account, retaining its password and active sessions;
+the first account edit saves the upgraded format. No database reset is involved.
+
+### Manage accounts
+
+Sign in as an admin and open **Settings → Users**. **Add user** creates a named
+account with a password and either **Viewer** (the default) or **Admin** access.
+Viewers can inspect topology, measurement history, service results and diagnoses;
+their discovery, port-editing and manual service-check controls are disabled.
+Admins can also configure targets and manage accounts. Usernames are case-sensitive.
+
+Use **Save user** to change a role or set a new password; leave the password field
+blank to keep it. **Delete user** removes access. Your own account cannot be deleted
+or demoted, and the final admin is protected. Adding an account does not sign out
+others. Password/role changes or deletion revoke only the affected account's old
+cookies and private live stream before its next update. Changing your own password
+refreshes your cookie so you can continue managing settings.
+
+The admin-only API is `GET/POST /api/users` and `PATCH/DELETE /api/users/{id}`.
+`GET /api/me` returns the current account's name and role. API responses and HTML
+never include stored password hashes, session-signing keys or saved passwords.
+Account writes use a file lock and atomic replacement to preserve simultaneous
+changes; at most 100 accounts are supported.
 
 If this file is absent or invalid, private access returns HTTP 503 and stays
-closed; public monitoring continues. Repeat the command to change or reset the
-login. Replacement credentials immediately invalidate old session cookies and
-close existing private live streams before their next update; no restart is needed
-once the new application version is running. Browser Basic credentials may remain
+closed; public monitoring continues. The local setup command can reset one named
+admin password or create a recovery admin, retaining all other accounts. No restart
+is needed for account changes once the new version is running. A corrupt file must
+be backed up and repaired before resetting accounts; the command does not silently
+discard it. Browser Basic credentials may remain
 cached until the browser is closed. The signed HttpOnly, SameSite=Strict cookie
 lasts eight hours (`AUTH_SESSION_SECONDS`, 900–86400 seconds) and is marked Secure
 when served over HTTPS. `AUTH_FILE` optionally overrides the credential file path.

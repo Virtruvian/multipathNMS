@@ -23,9 +23,9 @@
       <option value="tcp" selected>TCP</option>
     </select>
     <label class="tcp-port-label" for="tcp-port">TCP port
-      <input id="tcp-port" type="number" min="1" max="65535" step="1" value="443">
+      <input id="tcp-port" type="number" min="1" max="65535" step="1" value="443" {% if not can_manage %}disabled{% endif %}>
     </label>
-    <button id="discover-btn">Discover now</button>
+    <button id="discover-btn" {% if not can_manage %}disabled title="Administrator access required"{% endif %}>Discover now</button>
   </div>
 </section>
 
@@ -39,7 +39,7 @@
 </section>
 
 <section class="panel service-panel" aria-label="Service reachability">
-  <div class="service-heading"><strong>Service reachability</strong><button id="check-services-btn" type="button">Check services now</button></div>
+  <div class="service-heading"><strong>Service reachability</strong><button id="check-services-btn" type="button" {% if not can_manage %}disabled title="Administrator access required"{% endif %}>Check services now</button></div>
   <div id="service-checks" class="service-checks"></div>
   <p class="detail-note">TCP checks a normal connection. HTTPS verifies TLS and accepts HTTP 200–399 without following redirects. Route absence does not establish a service outage.</p>
 </section>

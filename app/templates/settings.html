@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Settings · multipathNMS{% endblock %}
 {% block content %}
-<section class="hero-row"><div><h1>Settings</h1><p>Manage monitored targets.</p></div></section>
+<section class="hero-row"><div><h1>Settings</h1><p>Manage monitored targets and user access.</p></div></section>
 <section class="grid-2 settings-grid">
   <div class="panel">
     <div class="panel-title">Add target</div>
@@ -39,5 +39,36 @@
     </div>
   </div>
 </section>
+<section class="grid-2 settings-grid users-section" aria-label="User management">
+  <div class="panel">
+    <div class="panel-title">Add user</div>
+    <form id="user-form" class="form-stack">
+      <label>Username<input id="user-name" required maxlength="64" autocomplete="off"></label>
+      <label>Password<input id="user-password" type="password" required minlength="12" maxlength="512" autocomplete="new-password"></label>
+      <label>Role<select id="user-role"><option value="viewer">Viewer — topology and diagnostics</option><option value="admin">Admin — settings and user management</option></select></label>
+      <p class="detail-note">Passwords need at least 12 characters. Viewers can inspect measurements; admins can change targets and manage accounts.</p>
+      <button type="submit">Add user</button>
+      <div id="user-form-message" class="form-message" role="status"></div>
+    </form>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Users</div>
+    <div class="settings-targets">
+      {% for user in users %}
+      {% set own = user.id == current_user.get('id') %}
+      <div class="settings-row user-row">
+        <div><strong>{{ user.username }}</strong><small>{{ 'Admin' if user.role == 'admin' else 'Viewer' }}{% if own %} · You{% endif %}</small></div>
+        <form class="user-settings" data-id="{{ user.id }}">
+          <label>Role<select name="role" {% if own %}disabled{% endif %}><option value="viewer" {% if user.role == 'viewer' %}selected{% endif %}>Viewer</option><option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Admin</option></select></label>
+          <label>New password<input name="password" type="password" minlength="12" maxlength="512" autocomplete="new-password" placeholder="Leave blank to keep password"></label>
+          <button type="submit">Save user</button><span class="settings-message" role="status"></span>
+        </form>
+        <button type="button" class="danger delete-user" data-id="{{ user.id }}" data-username="{{ user.username }}" {% if own %}disabled title="You cannot delete your own account"{% endif %}>Delete user</button>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="user-note detail-note">Your own account and the last admin are protected from deletion. Password or role changes revoke that account's previous sessions.</p>
+  </div>
+</section>
 {% endblock %}
-{% block scripts %}<script src="/static/settings.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/settings.js"></script><script src="/static/users.js"></script>{% endblock %}

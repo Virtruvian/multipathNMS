@@ -244,3 +244,8 @@ pre{
 .settings-message{color:var(--muted);overflow-wrap:anywhere}
 
 .form-stack .check-label{display:flex;align-items:center;gap:10px}
+.users-section{margin-top:22px}
+.user-settings{display:grid;gap:10px;width:100%;margin-top:12px}
+.user-settings label{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--muted)}
+.user-settings input{min-width:170px;flex:1}
+.user-note{padding:0 18px 18px}

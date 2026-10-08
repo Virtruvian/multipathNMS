@@ -6,6 +6,7 @@ const rawOutput = document.getElementById('voyage-output');
 const methodSelect = document.getElementById('trace-method');
 const tcpPortInput = document.getElementById('tcp-port');
 const checkServicesButton = document.getElementById('check-services-btn');
+const canManage = document.body.dataset.role !== 'viewer';
 let tcpPortDirty = false;
 
 let currentTopology = null;
@@ -177,7 +178,7 @@ function renderServiceChecks(data) {
 
 checkServicesButton.addEventListener('click', async () => {
   const targetId = select.value;
-  if (!targetId) return;
+  if (!canManage || !targetId) return;
   checkServicesButton.disabled = true;
   checkServicesButton.textContent = 'Checking…';
   try {
@@ -194,7 +195,7 @@ checkServicesButton.addEventListener('click', async () => {
   } catch (error) {
     if (select.value === targetId) rawOutput.textContent = String(error);
   } finally {
-    checkServicesButton.disabled = false;
+    checkServicesButton.disabled = !canManage;
     checkServicesButton.textContent = 'Check services now';
   }
 });
@@ -529,12 +530,13 @@ tcpPortInput.addEventListener('input', () => { tcpPortDirty = true; });
 methodSelect.addEventListener('change', () => {
   selectedRouteId = null;
   detailSelection = {kind: 'target', id: null};
-  tcpPortInput.disabled = discoverButton.disabled || methodSelect.value === 'icmp';
+  tcpPortInput.disabled = !canManage || discoverButton.disabled || methodSelect.value === 'icmp';
   if (currentTopology) renderTopology(currentTopology);
   fitAll();
 });
 
 discoverButton.addEventListener('click', async () => {
+  if (!canManage) return;
   if (!select.value) return;
   if (methodSelect.value !== 'icmp' && !tcpPortInput.reportValidity()) return;
   const scanTargetId = select.value;
@@ -569,8 +571,8 @@ discoverButton.addEventListener('click', async () => {
   } catch (error) {
     if (select.value === scanTargetId) rawOutput.textContent = String(error);
   } finally {
-    discoverButton.disabled = false;
-    tcpPortInput.disabled = methodSelect.value === 'icmp';
+    discoverButton.disabled = !canManage;
+    tcpPortInput.disabled = !canManage || methodSelect.value === 'icmp';
     discoverButton.textContent = 'Discover now';
   }
 });

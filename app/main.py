@@ -5,10 +5,12 @@ import re
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from sqlalchemy import desc, select
 
 from .database import SessionLocal, init_db
@@ -21,7 +23,8 @@ from .services.service_health import validate_https_path
 from .services.availability import target_availability
 from .services.diagnostics import diagnostics, incident_payload, latest_diagnostic
 from .websocket import manager
-from .auth import AdminAuthMiddleware, valid_session
+from .auth import AdminAuthMiddleware, credential_path, credentials, session_token, valid_session
+from .auth_credentials import AccountError, create_user, update_user, delete_user, user_summary
 from .public_nms import public_target, public_availability, public_checks, public_summary, public_event
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -93,6 +96,26 @@ class TargetUpdate(BaseModel):
         return value
 
 
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: SecretStr
+    role: Literal['admin', 'viewer'] = 'viewer'
+
+
+class UserUpdate(BaseModel):
+    password: SecretStr | None = None
+    role: Literal['admin', 'viewer'] | None = None
+
+
+def account_operation(operation, *args, **kwargs):
+    try:
+        return operation(credential_path(), *args, **kwargs)
+    except AccountError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=503, detail='Account storage unavailable; contact the administrator') from exc
+
+
 def serialize_target(target: Target, db) -> dict:
     checks = service_payload(db, target)
     return dict(MonitorService._serialize(target), service_checks=checks,
@@ -118,6 +141,14 @@ app.add_middleware(AdminAuthMiddleware)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["utc_iso"] = iso_utc
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    if request.url.path == '/api/users' or request.url.path.startswith('/api/users/'):
+        # Missing-field errors otherwise echo the whole body, including passwords.
+        return JSONResponse({'detail': [{key: error[key] for key in ('type', 'loc', 'msg')} for error in exc.errors()]}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/", include_in_schema=False)
@@ -183,7 +214,7 @@ def topology_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="topology.html",
-        context={"targets": targets},
+        context={"targets": targets, "can_manage": request.scope.get('auth_user', {}).get('role') == 'admin'},
     )
 
 
@@ -196,8 +227,46 @@ def settings_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
-        context={"targets": targets},
+        context={"targets": targets, "users": [user_summary(user) for user in sorted(
+            (credentials() or {}).get('users', []), key=lambda user: user['username'].lower())],
+            "current_user": request.scope.get('auth_user', {})},
     )
+
+
+@app.get('/api/me')
+def get_current_user(request: Request) -> dict:
+    return request.scope['auth_user']
+
+
+@app.get('/api/users')
+def get_users() -> list[dict]:
+    config = credentials()
+    if config is None:
+        raise HTTPException(status_code=503, detail='Account storage unavailable')
+    return [user_summary(user) for user in sorted(config['users'], key=lambda user: user['username'].lower())]
+
+
+@app.post('/api/users', status_code=201)
+def add_user(payload: UserCreate, request: Request) -> dict:
+    return account_operation(create_user, request.scope['auth_user']['id'], payload.username,
+                             payload.password.get_secret_value(), payload.role)
+
+
+@app.patch('/api/users/{user_id}')
+def edit_user(user_id: str, payload: UserUpdate, request: Request) -> dict:
+    result = account_operation(update_user, request.scope['auth_user']['id'], user_id, role=payload.role,
+                               password=payload.password.get_secret_value() if payload.password is not None else None)
+    if user_id == request.scope['auth_user']['id'] and payload.password is not None:
+        config = credentials()
+        if config and any(user['id'] == user_id for user in config['users']):
+            request.scope['admin_session'] = session_token(config, user_id)
+    return result
+
+
+@app.delete('/api/users/{user_id}', status_code=204)
+def remove_user(user_id: str, request: Request) -> Response:
+    account_operation(delete_user, request.scope['auth_user']['id'], user_id)
+    return Response(status_code=204)
 
 
 @app.get("/api/targets")

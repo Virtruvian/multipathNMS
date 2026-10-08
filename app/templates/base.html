@@ -7,13 +7,13 @@
   <link rel="stylesheet" href="/static/style.css">
   {% block head %}{% endblock %}
 </head>
-<body data-live-channel="{{ 'admin' if request.url.path in ['/topology', '/settings'] else 'live' }}">
+<body data-live-channel="{{ 'admin' if request.url.path in ['/topology', '/settings'] else 'live' }}" data-role="{{ request.scope.get('auth_user', {}).get('role', '') }}">
 <header class="topbar">
   <div class="brand"><span class="pulse"></span> multipathNMS</div>
   <nav>
     <a href="/nms" class="{% if request.url.path == '/nms' %}active{% endif %}">NMS</a>
     <a href="/topology" class="{% if request.url.path == '/topology' %}active{% endif %}">Topology</a>
-    <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>
+    {% if request.scope.get('auth_user', {}).get('role') != 'viewer' %}<a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">Settings</a>{% endif %}
   </nav>
   <div id="ws-state" class="ws-state">connecting</div>
 </header>
