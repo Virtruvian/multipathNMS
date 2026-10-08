@@ -122,11 +122,12 @@ async function refreshTargets() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const response = await fetch('/api/targets');
+    const response = await fetch('/api/nms');
     if (!response.ok) return;
     for (const target of await response.json()) {
       updateTarget(target);
       updateServices(target.id, target.service_checks);
+      if (target.route_summary) updateTopology(target.id, {summary: target.route_summary});
     }
     recount();
   } catch (_) {

@@ -59,6 +59,9 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - The application is intended for trusted/internal deployment unless authentication and access controls are explicitly added.
 - Docker capabilities should be limited to what the probe engine needs.
 - Pin external measurement-engine source revisions used in Docker builds.
+- Topology, Settings, detailed APIs, API docs and `/ws/admin` require administrator authentication; missing credentials fail closed.
+- `/nms`, `/api/nms` and `/ws/live` stay public through explicit field allowlists. Never expose route graphs, diagnostics, service paths or raw probe errors in their HTML, JSON or live messages.
+- Passwords are salted PBKDF2 hashes in a private persistent credential file, never hardcoded defaults or plaintext configuration. Password replacement invalidates signed sessions.
 
 ## Code conventions
 
@@ -131,6 +134,7 @@ and display-only `stale` states. Never replace ICMP target health with service s
 - health endpoint checks background task liveness; topology failure events identify the host
 - compact NMS availability uses HTTPS, then TCP, then explicit PING fallback; stored ICMP status remains independent
 - UP/DOWN confirmation uses normal checks; unmeasured/stale/paused states remain explicit, with read-only snapshot refresh
+- browser login popup for private views and operations, signed cookies for private live updates, and a dependency-free password setup command
 
 ## Next implementation step
 

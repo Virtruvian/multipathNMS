@@ -21,12 +21,13 @@ jobs:
           node-version: "22"
       - name: Validate JavaScript and graph behavior
         run: |
+          node --check app/static/app.js
           node --check app/static/network-graph.js
           node --check app/static/topology.js
           node --check app/static/service-health.js
           node --check app/static/nms.js
           node --check app/static/settings.js
-          node --test tests/test_network_graph.js tests/test_nms_availability.js
+          node --test tests/test_network_graph.js tests/test_nms_availability.js tests/test_live_channel.js
 
   python:
     runs-on: ubuntu-latest
@@ -97,6 +98,63 @@ jobs:
           asyncio.run(check())
           PY
 
+      - name: Login and privacy smoke test
+        run: |
+          docker exec -i multipathnms-ci python - <<'PY'
+          import asyncio
+          import base64
+          import json
+          import os
+          from pathlib import Path
+          import secrets
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          import websockets
+          from app.auth_credentials import write_credentials
+
+          def request(path, headers=None, method="GET"):
+              try:
+                  response = urlopen(Request("http://127.0.0.1:8080" + path, headers=headers or {}, method=method), timeout=5)
+              except HTTPError as error:
+                  response = error
+              with response:
+                  return response.status, response.headers, response.read()
+
+          assert request("/nms")[0] == 200
+          assert request("/api/nms")[0] == 200
+          assert request("/settings")[0] == 503
+          password = secrets.token_urlsafe(32)
+          write_credentials(Path("/data/admin-auth.json"), "ci-admin", password)
+          with os.fdopen(os.open("/tmp/ci-basic", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as file:
+              file.write("Basic " + base64.b64encode(("ci-admin:" + password).encode()).decode())
+          authorization = Path("/tmp/ci-basic").read_text()
+          for path in ("/settings", "/topology", "/api/targets", "/api/topology/1", "/api/events", "/docs", "/openapi.json"):
+              status, headers, _ = request(path)
+              assert status == 401 and headers["WWW-Authenticate"].startswith("Basic "), (path, status)
+          assert request("/api/targets", method="POST")[0] == 401
+          for path in ("/settings", "/topology"):
+              status, headers, body = request(path, {"Authorization": authorization})
+              assert status == 200 and headers["Cache-Control"] == "no-store"
+              assert b'data-live-channel="admin"' in body
+          cookie = headers["Set-Cookie"].split(";")[0]
+          assert "HttpOnly" in headers["Set-Cookie"] and "SameSite=strict" in headers["Set-Cookie"]
+          assert request("/api/targets", {"Cookie": cookie})[0] == 200
+          assert request("/api/targets", {"Cookie": cookie, "Origin": "http://elsewhere.invalid"}, "POST")[0] == 403
+
+          async def check_websockets():
+              try:
+                  async with websockets.connect("ws://127.0.0.1:8080/ws/admin"):
+                      raise AssertionError("Private stream allowed anonymous access")
+              except websockets.exceptions.InvalidStatus:
+                  pass
+              async with websockets.connect("ws://127.0.0.1:8080/ws/admin", additional_headers={"Cookie": cookie, "Origin": "http://127.0.0.1:8080"}):
+                  pass
+              async with websockets.connect("ws://127.0.0.1:8080/ws/live"):
+                  pass
+          asyncio.run(check_websockets())
+          print("Login: closed before setup, browser challenge, authenticated pages/APIs/stream, anonymous NMS and cross-origin blocking passed")
+          PY
+
       - name: Service API smoke test
         run: |
           docker exec -i multipathnms-ci python - <<'PY'
@@ -104,11 +162,12 @@ jobs:
           from urllib.request import Request, urlopen
           from urllib.error import HTTPError
           import time
+          from pathlib import Path
 
           def request(path, method="GET", body=None):
               data = json.dumps(body).encode() if body is not None else None
               with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
-                                   headers={"Content-Type": "application/json"}, method=method), timeout=15) as response:
+                                   headers={"Content-Type": "application/json", "Authorization": Path("/tmp/ci-basic").read_text()}, method=method), timeout=15) as response:
                   raw = response.read()
                   return json.loads(raw) if raw and response.headers.get("Content-Type", "").startswith("application/json") else raw
 
@@ -118,6 +177,9 @@ jobs:
           assert checks[0]["status"] == "healthy" and checks[1]["status"] == "disabled", checks
           assert request("/api/targets")[0]["availability"]["label"] == "UP"
           assert b"UP" in request("/nms")
+          public = request("/api/nms")[0]
+          assert public["availability"]["label"] == "UP" and "diagnostic" not in public and "https_path" not in public
+          assert all(set(check) == {"status"} for check in public["service_checks"]), public
           assert [phase["status"] for phase in checks[0]["phases"]] == ["skipped", "ok"], checks
           current = request(path, "PATCH", {"tcp_port":8081})
           assert current["service_checks"][0]["status"] == "unknown", current
@@ -161,11 +223,12 @@ jobs:
           import json
           from urllib.request import Request, urlopen
           import websockets
+          from pathlib import Path
 
           def request(path, method="GET", body=None):
               data = json.dumps(body).encode() if body is not None else None
               with urlopen(Request("http://127.0.0.1:8080" + path, data=data,
-                                   headers={"Content-Type": "application/json"}, method=method), timeout=5) as response:
+                                   headers={"Content-Type": "application/json", "Authorization": Path("/tmp/ci-basic").read_text()}, method=method), timeout=5) as response:
                   return json.load(response) if response.status != 204 else None
 
           async def navigate():

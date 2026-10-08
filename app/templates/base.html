@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/style.css">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body data-live-channel="{{ 'admin' if request.url.path in ['/topology', '/settings'] else 'live' }}">
 <header class="topbar">
   <div class="brand"><span class="pulse"></span> multipathNMS</div>
   <nav>

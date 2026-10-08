@@ -4,5 +4,7 @@ __pycache__/
 .env
 data/*.db
 data/*.db-*
+data/admin-auth.json
+data/.admin-auth-*
 .pytest_cache/
 .DS_Store

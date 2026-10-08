@@ -25,14 +25,16 @@ function dashboard() {
   class Clock extends Date {static now() {return now;}}
   let snapshot = [];
   let failFetch = false;
+  let fetchPath;
   const context = vm.createContext({Date: Clock, Map, Number, String, JSON,
     document: {getElementById: key => elements.get(key), querySelectorAll: selector => selector === '.target-card' ? [card] : []},
     window: {addEventListener: (name, fn) => callbacks.set(name, fn)},
     setInterval: (fn, delay) => timers.set(delay, fn),
-    fetch: async () => ({ok: !failFetch, json: async () => snapshot}),
+    fetch: async url => {fetchPath = url; return {ok: !failFetch, json: async () => snapshot};},
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/static/nms.js'), 'utf8'), context);
   return {card, parts, elements, availability,
+    get fetchPath() {return fetchPath;},
     send: detail => callbacks.get('multipath-live')({detail}),
     expire: () => {now += 100000; timers.get(5000)();},
     poll: async (targets, failed = false) => {snapshot = targets; failFetch = failed; await timers.get(30000)();},
@@ -50,6 +52,16 @@ test('site availability stays UP when a separate ping update reports DOWN', () =
   app.send({type: 'target_health', target: {id: 1, status: 'unknown', loss_percent: 0}});
   assert.equal(app.parts.get('.loss').textContent, '—');
   assert.equal(app.card.dataset.status, 'healthy');
+});
+
+test('anonymous snapshots use the public endpoint and refresh route counts', async () => {
+  const app = dashboard();
+  await app.poll([{id: 1, status: 'healthy', availability: app.availability('healthy'),
+    service_checks: [{status: 'healthy'}], route_summary: {active_routes: 2, missing_routes: 1}}]);
+  assert.equal(app.fetchPath, '/api/nms');
+  assert.equal(app.parts.get('.routes-active').textContent, '2');
+  assert.equal(app.parts.get('.routes-missing').textContent, '1');
+  assert.equal(app.elements.get('count-route-alerts').textContent, 1);
 });
 
 test('HTTPS failure changes the host status and counters despite healthy TCP', () => {

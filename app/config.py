@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_data_dir: Path = Path("/data")
+    auth_file: Path | None = None
+    auth_session_seconds: int = Field(default=28800, ge=900, le=86400)
     health_interval_seconds: float = 2.0
     topology_interval_seconds: int = 60
     topology_stale_minutes: int = 15

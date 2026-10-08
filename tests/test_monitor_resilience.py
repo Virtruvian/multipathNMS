@@ -51,8 +51,8 @@ class WebSocketBroadcastTests(unittest.IsolatedAsyncioTestCase):
         manager = ConnectionManager()
         dead, live = AsyncMock(), AsyncMock()
         dead.send_json.side_effect = OSError("socket closed")
-        await manager.connect(dead)
-        await manager.connect(live)
+        await manager.connect(dead, authorize=lambda: True)
+        await manager.connect(live, authorize=lambda: True)
         payload = {"type": "service_health"}
         await manager.broadcast(payload)
         live.send_json.assert_awaited_once_with(payload)
@@ -63,7 +63,7 @@ class WebSocketBroadcastTests(unittest.IsolatedAsyncioTestCase):
         manager = ConnectionManager()
         socket = AsyncMock()
         socket.send_json.side_effect = asyncio.CancelledError()
-        await manager.connect(socket)
+        await manager.connect(socket, authorize=lambda: True)
         with self.assertRaises(asyncio.CancelledError):
             await manager.broadcast({})
 

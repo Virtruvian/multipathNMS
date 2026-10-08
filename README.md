@@ -211,6 +211,7 @@ Install alongside other applications under `/opt/multipathNMS`:
 ```bash
 sudo git clone --branch develop/init-project https://github.com/Virtruvian/multipathNMS.git /opt/multipathNMS
 cd /opt/multipathNMS
+sudo python3 scripts/set-admin-password.py
 sudo docker compose up -d --build
 ```
 
@@ -234,6 +235,7 @@ Update an existing installation, including the patched probe executable:
 ```bash
 cd /opt/multipathNMS
 sudo git pull --ff-only origin develop/init-project
+sudo python3 scripts/set-admin-password.py
 sudo docker compose up -d --build
 ```
 
@@ -302,6 +304,45 @@ node --test tests/test_network_graph.js
 
 ## Security
 
-Targets are validated as IP addresses or DNS hostnames and are passed to subprocesses as argument arrays, never through a shell. The current application is intended for trusted/internal deployment; add authentication before exposing it publicly.
+**Topology and Settings require an administrator login**, using the browser's
+username/password popup. All detailed APIs, diagnosis downloads, target changes,
+discovery commands, API documentation and `/ws/admin` require the same login.
+The NMS dashboard stays public. `/api/nms` and `/ws/live` expose only dashboard
+fields: host name/address, availability, ping metrics and alert/route counts.
+Public event messages omit probe errors and route details. Target addresses on
+the NMS page remain public; the login protects the additional private information.
+
+Create your own account on the server before starting the updated container:
+
+```bash
+cd /opt/multipathNMS
+sudo python3 scripts/set-admin-password.py
+```
+
+The command prompts for a username (default `admin`) and a password of at least
+12 characters, then stores only a salted PBKDF2-SHA256 password hash and a random
+session-signing key in `data/admin-auth.json` with file permissions `0600`.
+There is no default password. It needs only Python 3's standard library, without
+installing the application's dependencies on the host. The existing Compose data
+volume preserves the login across rebuilds. On subsequent updates, keep the file
+and skip the password command unless you want to replace the login.
+
+If this file is absent or invalid, private access returns HTTP 503 and stays
+closed; public monitoring continues. Repeat the command to change or reset the
+login. Replacement credentials immediately invalidate old session cookies and
+close existing private live streams before their next update; no restart is needed
+once the new application version is running. Browser Basic credentials may remain
+cached until the browser is closed. The signed HttpOnly, SameSite=Strict cookie
+lasts eight hours (`AUTH_SESSION_SECONDS`, 900–86400 seconds) and is marked Secure
+when served over HTTPS. `AUTH_FILE` optionally overrides the credential file path.
+
+Use HTTPS when accessing the login across an untrusted network: HTTP Basic
+credentials are not encrypted over plain HTTP. A reverse proxy should forward
+the original HTTPS scheme and allow WebSocket upgrades. Do not expose the data
+directory through a web server or commit credential files to version control.
+
+Targets are validated as IP addresses or DNS hostnames and are passed to
+subprocesses as argument arrays, never through a shell. Docker capabilities stay
+limited to `NET_RAW` for measurement engines.
 
 See `AGENTS.md` for architecture and development rules.

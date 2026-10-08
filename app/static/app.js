@@ -4,7 +4,8 @@
 
   function connect() {
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    const socket = new WebSocket(`${scheme}://${location.host}/ws/live`);
+    const channel = document.body.dataset.liveChannel === 'admin' ? 'admin' : 'live';
+    const socket = new WebSocket(`${scheme}://${location.host}/ws/${channel}`);
     window.multipathSocket = socket;
 
     socket.onopen = () => {

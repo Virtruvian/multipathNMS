@@ -21,6 +21,8 @@ from .services.service_health import validate_https_path
 from .services.availability import target_availability
 from .services.diagnostics import diagnostics, incident_payload, latest_diagnostic
 from .websocket import manager
+from .auth import AdminAuthMiddleware, valid_session
+from .public_nms import public_target, public_availability, public_checks, public_summary, public_event
 
 BASE_DIR = Path(__file__).resolve().parent
 HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -112,6 +114,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="multipathNMS", version="0.4.0", lifespan=lifespan)
+app.add_middleware(AdminAuthMiddleware)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["utc_iso"] = iso_utc
@@ -149,12 +152,14 @@ def nms_page(request: Request):
         service_checks: dict[int, list] = {}
         availability: dict[int, dict] = {}
         for target in targets:
-            service_checks[target.id] = service_payload(db, target)
-            availability[target.id] = target_availability(target, service_checks[target.id])
-            route_summaries[target.id] = topology_payload(
+            checks = service_payload(db, target)
+            service_checks[target.id] = public_checks(checks)
+            availability[target.id] = public_availability(target_availability(target, checks))
+            route_summaries[target.id] = public_summary(topology_payload(
                 db,
                 target.id,
-            )["summary"]
+            )["summary"])
+        events = [public_event(event, {target.id: target.name for target in targets}) for event in events]
 
     return templates.TemplateResponse(
         request=request,
@@ -204,6 +209,20 @@ def get_targets() -> list[dict]:
                 select(Target).order_by(Target.name)
             )
         ]
+
+
+@app.get("/api/nms")
+def get_nms() -> list[dict]:
+    with SessionLocal() as db:
+        result = []
+        for target in db.scalars(select(Target).order_by(Target.name)):
+            checks = service_payload(db, target)
+            value = dict(MonitorService._serialize(target), service_checks=checks,
+                         availability=target_availability(target, checks))
+            item = public_target(value)
+            item['route_summary'] = public_summary(topology_payload(db, target.id)['summary'])
+            result.append(item)
+        return result
 
 
 @app.post("/api/targets", status_code=201)
@@ -383,12 +402,17 @@ async def discover_topology(
 
 
 @app.websocket("/ws/live")
+@app.websocket("/ws/admin")
 async def websocket_live(
     websocket: WebSocket,
 ) -> None:
-    await manager.connect(websocket)
+    authorize = (lambda: valid_session(websocket.scope.get('admin_session'))) if websocket.url.path == '/ws/admin' else None
+    if not await manager.connect(websocket, authorize=authorize):
+        return
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(websocket)
